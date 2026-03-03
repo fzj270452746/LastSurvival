@@ -1,0 +1,6 @@
+framework module Zuidhou {
+  umbrella header "Zuidhou.h"
+  export *
+
+  module * { export * }
+}
