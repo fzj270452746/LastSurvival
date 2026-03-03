@@ -80,24 +80,20 @@ private class HistoryRowBuilder {
         )
         rowNode.addChild(panel)
 
-        // Rank number
         let rankNode = TypographyScale.labelNode(text: vm.rankLabel, size: 10 * sc, tint: DesignToken.ashNebula)
         rankNode.position = CGPoint(x: -rowWidth / 2 + 20 * sc, y: 0)
         rowNode.addChild(rankNode)
 
-        // Outcome icon
         let iconNode = TypographyScale.labelNode(text: vm.outcomeIcon, size: 18 * sc)
         iconNode.position = CGPoint(x: -rowWidth / 2 + 46 * sc, y: 0)
         rowNode.addChild(iconNode)
 
-        // Class name
         let classColorTint = vm.isVictory ? DesignToken.phosphorLime : DesignToken.radiantCrimson
         let classNode      = TypographyScale.labelNode(text: vm.className, size: 10 * sc, tint: classColorTint, weight: .headline)
         classNode.position                = CGPoint(x: -rowWidth / 2 + 86 * sc, y: rowHeight * 0.12)
         classNode.horizontalAlignmentMode = .left
         rowNode.addChild(classNode)
 
-        // Stats line
         let statsNode = TypographyScale.labelNode(
             text: vm.statsLine,
             size: 10 * sc,
@@ -107,7 +103,6 @@ private class HistoryRowBuilder {
         statsNode.horizontalAlignmentMode = .left
         rowNode.addChild(statsNode)
 
-        // Date label (right edge)
         let dateNode = TypographyScale.labelNode(text: vm.dateText, size: 9 * sc, tint: DesignToken.ashNebula)
         dateNode.position                = CGPoint(x: rowWidth / 2 - 8 * sc, y: 0)
         dateNode.horizontalAlignmentMode = .right
@@ -117,81 +112,25 @@ private class HistoryRowBuilder {
     }
 }
 
-// MARK: - RunHistoryScene
-class RunHistoryScene: SKScene {
+// MARK: - RunHistoryScene: inherits ProstyleProscenium (Template Method)
+class RunHistoryScene: ProstyleProscenium {
 
     override func didMove(to view: SKView) {
-        backgroundColor = DesignToken.cosmicInk
-        assembleInterface()
-    }
-
-    private func assembleInterface() {
-        let sc      = size.calibration
-        let safeTop = view?.safeAreaInsets.top    ?? 44
-        let safeBot = view?.safeAreaInsets.bottom ?? 34
-
-        mountBackground(sc: sc)
-        let headerEdgeY = mountHeader(sc: sc, safeTop: safeTop)
-        mountSummaryBanner(sc: sc, headerEdgeY: headerEdgeY)
-        mountRunList(sc: sc, headerEdgeY: headerEdgeY, safeBot: safeBot)
-    }
-
-    private func mountBackground(sc: CGFloat) {
-        let wallpaper       = SKSpriteNode(imageNamed: "bg_main")
-        wallpaper.size      = size
-        wallpaper.position  = CGPoint(x: size.width / 2, y: size.height / 2)
-        wallpaper.alpha     = 0.12
-        wallpaper.zPosition = -1
-        addChild(wallpaper)
-
-        let dim       = SKShapeNode(rectOf: size)
-        dim.position  = CGPoint(x: size.width / 2, y: size.height / 2)
-        dim.fillColor = UIColor(red: 0.03, green: 0.02, blue: 0.14, alpha: 0.65)
-        dim.strokeColor = .clear
-        dim.zPosition = 0
-        addChild(dim)
-    }
-
-    // Returns the bottom Y of the header bar
-    private func mountHeader(sc: CGFloat, safeTop: CGFloat) -> CGFloat {
-        let barH   = 46 * sc
-        let barCenterY = size.height - safeTop - barH / 2
-
-        let headerBar       = SKShapeNode(rectOf: CGSize(width: size.width, height: barH))
-        headerBar.position  = CGPoint(x: size.width / 2, y: barCenterY)
-        headerBar.fillColor = UIColor(red: 0.06, green: 0.03, blue: 0.18, alpha: 0.92)
-        headerBar.strokeColor = .clear
-        headerBar.zPosition = 1
-        addChild(headerBar)
-
-        let divider = GeometryForge.dividerLine(span: size.width, tint: DesignToken.radiantCrimson, opacity: 0.45)
-        divider.position  = CGPoint(x: size.width / 2, y: barCenterY - barH / 2)
-        divider.zPosition = 2
-        addChild(divider)
-
-        let backBtn = ObsidianButtonNode(
-            size:        CGSize(width: 72 * sc, height: 34 * sc),
-            title:       "BACK",
-            fillColor:   DesignToken.violetShadow,
-            titleColor:  DesignToken.frostSheen,
-            cornerRadius: 8 * sc
+        // Configure header before calling super (which runs the template)
+        headerConfig = ProsceniumHeaderConfig.standard(
+            title: "RUN HISTORY",
+            tint:  DesignToken.ceruleanVolt,
+            back:  { [weak self] in self?.returnToMenu() }
         )
-        backBtn.position  = CGPoint(x: 16 * sc + 36 * sc, y: barCenterY)
-        backBtn.zPosition = 4
-        backBtn.onTap     = { [weak self] in self?.returnToMenu() }
-        addChild(backBtn)
+        super.didMove(to: view)
+    }
 
-        let titleNode = TypographyScale.labelNode(
-            text:   "RUN HISTORY",
-            size:   14 * sc,
-            tint:   DesignToken.ceruleanVolt,
-            weight: .headline
-        )
-        titleNode.position  = CGPoint(x: size.width / 2, y: barCenterY)
-        titleNode.zPosition = 2
-        addChild(titleNode)
-
-        return barCenterY - barH / 2
+    // MARK: - Template Method override: scene-specific content
+    override func buildContent() {
+        let sc      = displayScale
+        let safeBot = safeBottomInset
+        mountSummaryBanner(sc: sc, headerEdgeY: headerBottomY)
+        mountRunList(sc: sc, headerEdgeY: headerBottomY, safeBot: safeBot)
     }
 
     private func mountSummaryBanner(sc: CGFloat, headerEdgeY: CGFloat) {
@@ -256,9 +195,7 @@ class RunHistoryScene: SKScene {
     }
 
     private func returnToMenu() {
-        let menu = TitleVaultScene(size: size)
-        menu.scaleMode = scaleMode
-        view?.presentScene(menu, transition: SKTransition.push(with: .right, duration: 0.35))
+        dispatchEgress(RetreatEgress())
     }
 
     private func goBack() { returnToMenu() }

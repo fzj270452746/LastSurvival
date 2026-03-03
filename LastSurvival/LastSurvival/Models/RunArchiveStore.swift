@@ -145,3 +145,74 @@ extension AnnalsDepository {
 
 typealias RunRecord       = ExpeditionLog
 typealias RunArchiveStore = AnnalsDepository
+
+// MARK: - SedimentaryHoard: Repository protocol abstracting run-record storage
+// Pattern: Repository
+// Decouples consumers from the concrete AnnalsDepository, enabling future
+// substitution (e.g. CloudKit-backed store, test doubles).
+protocol SedimentaryHoard: AnyObject {
+    var expeditions:      [ExpeditionLog] { get }
+    var statistics:       RunStatistics   { get }
+    var peakSolstice:     Int             { get }
+    var totalExpeditions: Int             { get }
+    var totalTriumphs:    Int             { get }
+    var totalSpecters:    Int             { get }
+    func inscribe(log: ExpeditionLog)
+}
+
+// Conform AnnalsDepository to the new protocol — zero-cost: all members already exist.
+extension AnnalsDepository: SedimentaryHoard {}
+
+// MARK: - CachingSedimentaryHoard: in-memory cache wrapper around AnnalsDepository
+// Pattern: Repository (Caching Decorator)
+// Wraps any SedimentaryHoard and keeps a warm in-memory cache of the expedition list,
+// avoiding repeated UserDefaults decoding on every statistics query.
+final class CachingSedimentaryHoard: SedimentaryHoard {
+
+    private let inner:             AnnalsDepository
+    private var cache:             [ExpeditionLog]?   // nil = cache cold
+    private let cacheWriteThrough: Bool
+
+    init(inner: AnnalsDepository = .shared, writeThrough: Bool = true) {
+        self.inner             = inner
+        self.cacheWriteThrough = writeThrough
+    }
+
+    // MARK: SedimentaryHoard conformance
+
+    var expeditions: [ExpeditionLog] {
+        if let cached = cache { return cached }
+        let loaded = inner.expeditions
+        cache = loaded
+        return loaded
+    }
+
+    var statistics: RunStatistics { RunStatistics(records: expeditions) }
+
+    func inscribe(log: ExpeditionLog) {
+        inner.inscribe(log: log)
+        if cacheWriteThrough {
+            var updated = cache ?? []
+            updated.insert(log, at: 0)
+            cache = updated
+        } else {
+            cache = nil     // invalidate
+        }
+    }
+
+    var peakSolstice:     Int { inner.peakSolstice     }
+    var totalExpeditions: Int { expeditions.count       }
+    var totalTriumphs:    Int { statistics.victoryCount }
+    var totalSpecters:    Int { statistics.zombieKillSum }
+
+    // MARK: Cache lifecycle
+
+    /// Discard the cache so the next read reloads from persistent storage
+    func invalidateCache() { cache = nil }
+
+    /// Pre-load the cache from the underlying store
+    func warmCache() { cache = inner.expeditions }
+
+    // MARK: Shared accessor
+    static let shared = CachingSedimentaryHoard()
+}

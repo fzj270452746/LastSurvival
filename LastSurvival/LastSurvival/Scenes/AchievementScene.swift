@@ -75,84 +75,33 @@ private struct AchievementGridLayout {
     var cellStride: CGFloat { cardHeight + gutterSize }
 }
 
-// MARK: - AchievementScene
-class AchievementScene: SKScene {
+// MARK: - AchievementScene: inherits ProstyleProscenium (Template Method)
+class AchievementScene: ProstyleProscenium {
 
     override func didMove(to view: SKView) {
-        backgroundColor = DesignToken.cosmicInk
-        assembleInterface()
-    }
-
-    private func assembleInterface() {
-        let sc      = size.calibration
-        let safeTop = view?.safeAreaInsets.top    ?? 44
-        let safeBot = view?.safeAreaInsets.bottom ?? 34
-
-        mountBackground(sc: sc)
-        let headerEdgeY = mountHeader(sc: sc, safeTop: safeTop)
-        mountAchievementGrid(sc: sc, topY: headerEdgeY - 14 * sc, bottomY: safeBot + 14 * sc)
-    }
-
-    private func mountBackground(sc: CGFloat) {
-        let wallpaper       = SKSpriteNode(imageNamed: "bg_main")
-        wallpaper.size      = size
-        wallpaper.position  = CGPoint(x: size.width / 2, y: size.height / 2)
-        wallpaper.alpha     = 0.12
-        wallpaper.zPosition = -1
-        addChild(wallpaper)
-
-        let dim       = SKShapeNode(rectOf: size)
-        dim.position  = CGPoint(x: size.width / 2, y: size.height / 2)
-        dim.fillColor = UIColor(red: 0.03, green: 0.02, blue: 0.14, alpha: 0.65)
-        dim.strokeColor = .clear
-        dim.zPosition = 0
-        addChild(dim)
-    }
-
-    // Returns bottom Y of header
-    private func mountHeader(sc: CGFloat, safeTop: CGFloat) -> CGFloat {
-        let barH       = 46 * sc
-        let barCenterY = size.height - safeTop - barH / 2
-
-        let headerBar       = SKShapeNode(rectOf: CGSize(width: size.width, height: barH))
-        headerBar.position  = CGPoint(x: size.width / 2, y: barCenterY)
-        headerBar.fillColor = UIColor(red: 0.06, green: 0.03, blue: 0.18, alpha: 0.92)
-        headerBar.strokeColor = .clear
-        headerBar.zPosition = 1
-        addChild(headerBar)
-
-        let divider = GeometryForge.dividerLine(span: size.width, tint: DesignToken.radiantCrimson, opacity: 0.45)
-        divider.position  = CGPoint(x: size.width / 2, y: barCenterY - barH / 2)
-        divider.zPosition = 2
-        addChild(divider)
-
-        let backBtn = ObsidianButtonNode(
-            size:        CGSize(width: 72 * sc, height: 34 * sc),
-            title:       "BACK",
-            fillColor:   DesignToken.violetShadow,
-            titleColor:  DesignToken.frostSheen,
-            cornerRadius: 8 * sc
+        headerConfig = ProsceniumHeaderConfig.standard(
+            title: "ACHIEVEMENTS  \(progressString)",
+            tint:  DesignToken.ceruleanVolt,
+            back:  { [weak self] in self?.returnToMenu() }
         )
-        backBtn.position  = CGPoint(x: 16 * sc + 36 * sc, y: barCenterY)
-        backBtn.zPosition = 4
-        backBtn.onTap     = { [weak self] in self?.returnToMenu() }
-        addChild(backBtn)
-
-        // Title with "X/Y" progress in same label
-        let registry    = AchievementRegistry.shared
-        let progressStr = "\(registry.unlockedCount)/\(registry.all.count)"
-        let titleNode   = TypographyScale.labelNode(
-            text:   "ACHIEVEMENTS  \(progressStr)",
-            size:   13 * sc,
-            tint:   DesignToken.ceruleanVolt,
-            weight: .headline
-        )
-        titleNode.position  = CGPoint(x: size.width / 2, y: barCenterY)
-        titleNode.zPosition = 2
-        addChild(titleNode)
-
-        return barCenterY - barH / 2
+        super.didMove(to: view)
     }
+
+    private var progressString: String {
+        let r = AchievementRegistry.shared
+        return "\(r.unlockedCount)/\(r.all.count)"
+    }
+
+    // MARK: - Template Method override
+    override func buildContent() {
+        let sc      = displayScale
+        let safeBot = safeBottomInset
+        mountAchievementGrid(sc: sc, topY: headerBottomY - 14 * sc, bottomY: safeBot + 14 * sc)
+    }
+
+    // assembleInterface / mountBackground / mountHeader are superseded by ProstyleProscenium.
+    // Their logic now lives in the base class template (buildSubstrate + buildCornice).
+    // Only mountAchievementGrid (scene-specific content) is retained below.
 
     private func mountAchievementGrid(sc: CGFloat, topY: CGFloat, bottomY: CGFloat) {
         let registry = AchievementRegistry.shared
@@ -252,9 +201,7 @@ class AchievementScene: SKScene {
     }
 
     private func returnToMenu() {
-        let menu = TitleVaultScene(size: size)
-        menu.scaleMode = scaleMode
-        view?.presentScene(menu, transition: SKTransition.push(with: .right, duration: 0.35))
+        dispatchEgress(RetreatEgress())
     }
 
     private func goBack() { returnToMenu() }

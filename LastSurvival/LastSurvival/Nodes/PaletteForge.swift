@@ -395,6 +395,124 @@ enum ChromaticAnvil {
     }
 }
 
+// MARK: - TinctureApplicant: Decorator protocol for node visual effects
+// Pattern: Decorator
+// Each concrete tincture applies one specific visual treatment to an SKNode.
+protocol TinctureApplicant {
+    /// Apply this tincture's visual effect to the given node
+    func apply(to node: SKNode)
+}
+
+// MARK: - GlowTincture: continuous glow-pulse oscillation on SKShapeNode
+struct GlowTincture: TinctureApplicant {
+    var peakGlow:   CGFloat       = 5
+    var halfPeriod: TimeInterval  = 0.75
+
+    func apply(to node: SKNode) {
+        guard let shape = node as? SKShapeNode else { return }
+        let pulse = AnimationBlueprint.glowOscillation(
+            peakGlow:   peakGlow,
+            halfPeriod: halfPeriod
+        )
+        shape.run(pulse)
+    }
+}
+
+// MARK: - BracketTincture: corner bracket decorations (L-shaped lines at corners)
+struct BracketTincture: TinctureApplicant {
+    var coveredSize: CGSize
+    var armLength:   CGFloat  = 14
+    var tint:        UIColor  = DesignToken.radiantCrimson
+    var thickness:   CGFloat  = 2
+
+    func apply(to node: SKNode) {
+        GeometryForge.attachCornerBrackets(
+            to:        node,
+            covering:  coveredSize,
+            armLength: armLength,
+            tint:      tint,
+            thickness: thickness
+        )
+    }
+}
+
+// MARK: - EntranceTincture: fade-in + vertical slide entrance animation
+struct EntranceTincture: TinctureApplicant {
+    var delay:    TimeInterval = 0
+    var duration: TimeInterval = 0.28
+    var slideY:   CGFloat      = 10    // upward translation in points (pre-scaled)
+    var scale:    CGFloat      = 1     // display scale factor
+
+    func apply(to node: SKNode) {
+        let scaledSlide = slideY * scale
+        node.alpha = 0
+        node.run(SKAction.sequence([
+            SKAction.wait(forDuration: delay),
+            SKAction.group([
+                SKAction.fadeIn(withDuration: duration),
+                SKAction.moveBy(x: 0, y: scaledSlide, duration: duration)
+            ])
+        ]))
+    }
+}
+
+// MARK: - PulseTincture: continuous scale-pulse animation
+struct PulseTincture: TinctureApplicant {
+    var scaleMin:   CGFloat      = 1.0
+    var scaleMax:   CGFloat      = 1.04
+    var halfPeriod: TimeInterval = 1.0
+
+    func apply(to node: SKNode) {
+        node.run(SKAction.repeatForever(SKAction.sequence([
+            SKAction.scale(to: scaleMax, duration: halfPeriod),
+            SKAction.scale(to: scaleMin, duration: halfPeriod)
+        ])))
+    }
+}
+
+// MARK: - BlinkTincture: looping alpha-fade blink
+struct BlinkTincture: TinctureApplicant {
+    var dimAlpha:   CGFloat      = 0.35
+    var halfPeriod: TimeInterval = 1.5
+
+    func apply(to node: SKNode) {
+        node.run(SKAction.repeatForever(SKAction.sequence([
+            SKAction.fadeAlpha(to: dimAlpha, duration: halfPeriod),
+            SKAction.fadeAlpha(to: 1.0,     duration: halfPeriod)
+        ])))
+    }
+}
+
+// MARK: - TinctureChain: composite decorator — applies multiple tinctures in sequence
+struct TinctureChain: TinctureApplicant {
+    let tinctures: [any TinctureApplicant]
+
+    init(_ tinctures: (any TinctureApplicant)...) {
+        self.tinctures = tinctures
+    }
+
+    init(array: [any TinctureApplicant]) {
+        self.tinctures = array
+    }
+
+    func apply(to node: SKNode) {
+        tinctures.forEach { $0.apply(to: node) }
+    }
+}
+
+// MARK: - GeometryForge extension: bulk-apply tinctures to a node
+extension GeometryForge {
+    /// Apply an array of TinctureApplicant decorators to a node in order
+    static func applyTinctures(_ tinctures: [any TinctureApplicant], to node: SKNode) {
+        tinctures.forEach { $0.apply(to: node) }
+    }
+
+    /// Apply a single TinctureChain to a node
+    static func applyChain(_ chain: TinctureChain, to node: SKNode) {
+        chain.apply(to: node)
+    }
+}
+
 // MARK: - CGSize: adaptive scale extension
 extension CGSize {
     // Primary scale factor relative to 390-pt reference width

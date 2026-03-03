@@ -47,7 +47,7 @@ private class BackgroundWeaver {
         scene.addChild(overlay)
     }
 
-    private func mountGridLines(into scene: SKScene, count: Int) {
+    func mountGridLines(into scene: SKScene, count: Int) {
         (0..<count).forEach { index in
             let yPos = sceneSize.height * CGFloat(index) / CGFloat(count)
             let path = CGMutablePath()
@@ -84,30 +84,26 @@ private class StatsDisplay {
     }
 }
 
-// MARK: - HarbingerDuskScene: main menu
-class HarbingerDuskScene: SKScene {
+// MARK: - HarbingerDuskScene: main menu — inherits ProstyleProscenium (Template Method)
+class HarbingerDuskScene: ProstyleProscenium {
 
     override func didMove(to view: SKView) {
-        backgroundColor = DesignToken.cosmicInk
-        assembleScene()
+        // Title screen uses a denser overlay than other scenes
+        substrateBgAlpha  = 0.18
+        substrateDimAlpha = 0.72
+        headerConfig = nil    // no standard nav bar on title screen
+        super.didMove(to: view)
     }
 
-    private func assembleScene() {
-        let sc = size.calibration
-
-        // Background layer
-        BackgroundWeaver(sceneSize: size, scale: sc).build(into: self)
-
-        // Branding region
+    // MARK: - Template Method override
+    override func buildContent() {
+        let sc = displayScale
+        // Grid lines supplement the base substrate layers
+        BackgroundWeaver(sceneSize: size, scale: sc).mountGridLines(into: self, count: 8)
         assembleBranding(sc: sc)
-
-        // Menu buttons (data-driven)
         assembleMenuButtons(sc: sc)
-
-        // Statistics footer
         StatsDisplay(scale: sc).build(into: self, sceneSize: size)
 
-        // Version label
         let verLabel  = TypographyScale.labelNode(
             text: "v1.0",
             size: 9 * sc,
@@ -286,27 +282,19 @@ class HarbingerDuskScene: SKScene {
     // MARK: - Navigation helpers
 
     private func navigateToCharacterSelect() {
-        let destination = VestibuleClaspScene(size: size)
-        destination.scaleMode = scaleMode
-        view?.presentScene(destination, transition: SKTransition.push(with: .left, duration: 0.4))
+        dispatchEgress(VestibuleEgress())
     }
 
     private func navigateToHistory() {
-        let destination = ChronolithScrollScene(size: size)
-        destination.scaleMode = scaleMode
-        view?.presentScene(destination, transition: SKTransition.push(with: .left, duration: 0.35))
+        dispatchEgress(ChronolithEgress())
     }
 
     private func navigateToAchievements() {
-        let destination = PalimpsestGildScene(size: size)
-        destination.scaleMode = scaleMode
-        view?.presentScene(destination, transition: SKTransition.push(with: .left, duration: 0.35))
+        dispatchEgress(PalimpsestEgress())
     }
 
     private func navigateToTutorial() {
-        let destination = VademecumScrollScene(size: size)
-        destination.scaleMode = scaleMode
-        view?.presentScene(destination, transition: SKTransition.push(with: .left, duration: 0.35))
+        dispatchEgress(VademecumEgress())
     }
 
     // Legacy navigation aliases

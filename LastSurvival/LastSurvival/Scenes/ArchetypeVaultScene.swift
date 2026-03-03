@@ -64,8 +64,8 @@ private class SelectionRingController {
     }
 }
 
-// MARK: - VestibuleClaspScene: character selection screen
-class VestibuleClaspScene: SKScene {
+// MARK: - VestibuleClaspScene: character selection screen — inherits ProstyleProscenium
+class VestibuleClaspScene: ProstyleProscenium {
 
     private var selectedCaste: VocationCaste = .salver
     private var cardNodeMap:   [VocationCaste: SKNode] = [:]
@@ -74,76 +74,22 @@ class VestibuleClaspScene: SKScene {
     private var currentDetailPanel: SKNode?
 
     override func didMove(to view: SKView) {
-        backgroundColor = DesignToken.cosmicInk
-        buildScene()
+        substrateBgAlpha  = 0.14
+        substrateDimAlpha = 0.65
+        headerConfig = ProsceniumHeaderConfig.standard(
+            title: "CHOOSE SURVIVOR",
+            tint:  DesignToken.ceruleanVolt,
+            back:  { [weak self] in self?.returnToMenu() }
+        )
+        super.didMove(to: view)
     }
 
-    // MARK: - Scene construction
-
-    private func buildScene() {
-        let sc = size.calibration
-        mountBackground(sc: sc)
-        mountHeader(sc: sc)
+    // MARK: - Template Method override
+    override func buildContent() {
+        let sc = displayScale
         mountCharacterGrid(sc: sc)
         buildDetailPanel(sc: sc)
         mountConfirmButton(sc: sc)
-    }
-
-    private func mountBackground(sc: CGFloat) {
-        let backdrop      = SKSpriteNode(imageNamed: "bg_main")
-        backdrop.size     = size
-        backdrop.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        backdrop.alpha    = 0.14
-        backdrop.zPosition = -1
-        addChild(backdrop)
-
-        let dimFill = UIColor(red: 0.04, green: 0.02, blue: 0.16, alpha: 0.65)
-        let dimLayer       = SKShapeNode(rectOf: size)
-        dimLayer.position  = CGPoint(x: size.width / 2, y: size.height / 2)
-        dimLayer.fillColor = dimFill
-        dimLayer.strokeColor = .clear
-        dimLayer.zPosition = 0
-        addChild(dimLayer)
-    }
-
-    private func mountHeader(sc: CGFloat) {
-        let safeTop  = view?.safeAreaInsets.top ?? 44
-        let barH     = 46 * sc
-        let barCenterY = size.height - safeTop - barH / 2
-
-        let headerBar       = SKShapeNode(rectOf: CGSize(width: size.width, height: barH))
-        headerBar.position  = CGPoint(x: size.width / 2, y: barCenterY)
-        headerBar.fillColor = UIColor(red: 0.06, green: 0.03, blue: 0.18, alpha: 0.92)
-        headerBar.strokeColor = .clear
-        headerBar.zPosition = 1
-        addChild(headerBar)
-
-        let separator = GeometryForge.dividerLine(span: size.width, tint: DesignToken.radiantCrimson, opacity: 0.45)
-        separator.position  = CGPoint(x: size.width / 2, y: barCenterY - barH / 2)
-        separator.zPosition = 2
-        addChild(separator)
-
-        let backBtn = ClaviculaNodelet(
-            size:        CGSize(width: 72 * sc, height: 34 * sc),
-            title:       "BACK",
-            fillColor:   DesignToken.violetShadow,
-            titleColor:  DesignToken.frostSheen,
-            cornerRadius: 8 * sc
-        )
-        backBtn.position  = CGPoint(x: 16 * sc + 36 * sc, y: barCenterY)
-        backBtn.zPosition = 4
-        backBtn.onImpact  = { [weak self] in self?.returnToMenu() }
-        addChild(backBtn)
-
-        let headerTitle = TypographyScale.labelNode(
-            text:   "CHOOSE SURVIVOR",
-            size:   14 * sc,
-            tint:   DesignToken.ceruleanVolt,
-            weight: .headline
-        )
-        headerTitle.position  = CGPoint(x: size.width / 2, y: barCenterY)
-        headerTitle.zPosition = 2
-        addChild(headerTitle)
     }
 
     private func mountCharacterGrid(sc: CGFloat) {
@@ -346,15 +292,11 @@ class VestibuleClaspScene: SKScene {
     private func launchGame() {
         let blueprint = WayfareBlueprint.fromCaste(selectedCaste)
         let grimoire  = VespersGrimoire(archetype: blueprint)
-        let arena     = OublietteSpinScene(size: size, grimoire: grimoire)
-        arena.scaleMode = scaleMode
-        view?.presentScene(arena, transition: SKTransition.push(with: .left, duration: 0.4))
+        dispatchEgress(ArenaEgress(grimoire: grimoire))
     }
 
     private func returnToMenu() {
-        let menu = HarbingerDuskScene(size: size)
-        menu.scaleMode = scaleMode
-        view?.presentScene(menu, transition: SKTransition.push(with: .right, duration: 0.35))
+        dispatchEgress(RetreatEgress())
     }
 
     private func mountConfirmButton(sc: CGFloat) {

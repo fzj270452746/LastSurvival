@@ -210,3 +210,58 @@ extension MedallionCensus {
 
 typealias Achievement         = Medallion
 typealias AchievementRegistry = MedallionCensus
+
+// MARK: - AdjudicationChain: fluent evaluation chain for MedallionCensus
+// Wraps the adjudicate call with a builder-style interface for configuring
+// pre/post-evaluation hooks and filtering the result set.
+// Example:
+//   let unlocked = AdjudicationChain(census: .shared)
+//       .filteringTo(signa: ["victory", "runs_10"])
+//       .adjudicate(log: runLog)
+final class AdjudicationChain {
+
+    private let census:       MedallionCensus
+    private var signumFilter: Set<String>?    // nil = no filter (all conditions evaluated)
+    private var preHook:  ((ExpeditionLog) -> Void)?
+    private var postHook: ([Medallion]) -> Void = { _ in }
+
+    init(census: MedallionCensus = .shared) {
+        self.census = census
+    }
+
+    // MARK: - Fluent configuration
+
+    /// Restrict evaluation to the specified achievement signa (IDs)
+    @discardableResult
+    func filteringTo(signa: [String]) -> Self {
+        signumFilter = Set(signa); return self
+    }
+
+    /// Register a closure called before evaluation begins
+    @discardableResult
+    func onBeforeEvaluation(_ hook: @escaping (ExpeditionLog) -> Void) -> Self {
+        preHook = hook; return self
+    }
+
+    /// Register a closure called after evaluation with the newly-unlocked medallions
+    @discardableResult
+    func onAfterEvaluation(_ hook: @escaping ([Medallion]) -> Void) -> Self {
+        postHook = hook; return self
+    }
+
+    // MARK: - Terminal: run the chain
+
+    /// Execute evaluation and return newly-unlocked medallions
+    @discardableResult
+    func adjudicate(log: ExpeditionLog) -> [Medallion] {
+        preHook?(log)
+        var freshUnlocks = census.adjudicate(log: log)
+
+        if let filter = signumFilter {
+            freshUnlocks = freshUnlocks.filter { filter.contains($0.signum) }
+        }
+
+        postHook(freshUnlocks)
+        return freshUnlocks
+    }
+}

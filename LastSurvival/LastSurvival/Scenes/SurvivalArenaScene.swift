@@ -17,8 +17,8 @@ class SurvivalArenaScene: SKScene {
     private let chronicle: VigilChronicle
     private var hudPanel:    ProvisionsManifestNode!
     private var reelColumns: [ReelAxleNode] = []
-    private var spinButton:  ObsidianButtonNode!
-    private var modeSwitch:  ForayToggleNode!
+    fileprivate var spinButton:  ObsidianButtonNode!
+    fileprivate var modeSwitch:  ForayToggleNode!
     private var reportPanel: LedgerPanelNode?
 
     private var currentPhase: ArenaPhase = .awaitingSpin
@@ -570,4 +570,130 @@ extension SurvivalArenaScene {
     convenience init(size: CGSize, grimoire: VespersGrimoire) {
         self.init(size: size, chronicle: grimoire)
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MARK: - State Pattern: PhaseObligation + PhaseSteward
+// Formalises ArenaPhase transitions into discrete State objects.
+// Each obligation encapsulates enter/exit side-effects for its specific phase.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// MARK: - ArenaPhaseTag: lightweight identifier mirroring ArenaPhase
+enum ArenaPhaseTag {
+    case quiescent    // awaiting spin
+    case vortex       // spinning
+    case reckoning    // settling (bounce animation)
+    case ledger       // showing day report
+    case extinct      // game over
+}
+
+// MARK: - PhaseObligation: State protocol
+// Pattern: State
+protocol PhaseObligation: AnyObject {
+    var tag: ArenaPhaseTag { get }
+    func enter(arena: SurvivalArenaScene)
+    func exit(arena: SurvivalArenaScene)
+}
+
+// MARK: - QuiescentObligation: awaitingSpin state
+// Enables all interactive controls; player may spin.
+final class QuiescentObligation: PhaseObligation {
+    let tag: ArenaPhaseTag = .quiescent
+
+    func enter(arena: SurvivalArenaScene) {
+        arena.spinButton.setEnabled(true)
+        arena.modeSwitch.setEnabled(true)
+    }
+    func exit(arena: SurvivalArenaScene) {
+        arena.spinButton.setEnabled(false)
+        arena.modeSwitch.setEnabled(false)
+    }
+}
+
+// MARK: - VortexObligation: spinning state
+// Controls are disabled; reels are in motion.
+final class VortexObligation: PhaseObligation {
+    let tag: ArenaPhaseTag = .vortex
+
+    func enter(arena: SurvivalArenaScene) {
+        // Controls already disabled by exit of QuiescentObligation
+        // Optionally add a spinning indicator here in future
+    }
+    func exit(arena: SurvivalArenaScene) { }
+}
+
+// MARK: - ReckoningObligation: settling state
+// Brief bounce feedback before ledger display.
+final class ReckoningObligation: PhaseObligation {
+    let tag: ArenaPhaseTag = .reckoning
+
+    func enter(arena: SurvivalArenaScene) { }
+    func exit(arena: SurvivalArenaScene)  { }
+}
+
+// MARK: - LedgerObligation: showingLedger state
+// Day-report overlay is visible; waiting for player dismissal.
+final class LedgerObligation: PhaseObligation {
+    let tag: ArenaPhaseTag = .ledger
+
+    func enter(arena: SurvivalArenaScene) { }
+    func exit(arena: SurvivalArenaScene)  { }
+}
+
+// MARK: - ExtinctObligation: gameOver state
+// No further interaction; scene will transition to EpitaphScene.
+final class ExtinctObligation: PhaseObligation {
+    let tag: ArenaPhaseTag = .extinct
+
+    func enter(arena: SurvivalArenaScene) {
+        // Disable everything to prevent accidental interaction during transition
+        arena.spinButton.setEnabled(false)
+        arena.modeSwitch.setEnabled(false)
+    }
+    func exit(arena: SurvivalArenaScene) { }
+}
+
+// MARK: - PhaseSteward: manages the current PhaseObligation and transitions
+// Calling transition(to:arena:) exits the current state and enters the new one.
+final class PhaseSteward {
+
+    private(set) var current: any PhaseObligation
+
+    init(initial: any PhaseObligation = QuiescentObligation()) {
+        self.current = initial
+    }
+
+    /// Transition to a new obligation, invoking exit/enter hooks
+    func transition(to next: any PhaseObligation, arena: SurvivalArenaScene) {
+        guard current.tag != next.tag else { return }   // no-op on same-state transition
+        current.exit(arena: arena)
+        current = next
+        current.enter(arena: arena)
+    }
+
+    var tag: ArenaPhaseTag { current.tag }
+}
+
+// MARK: - SurvivalArenaScene extension: steward integration
+// Exposes a steward property via associated object and helpers to use it.
+extension SurvivalArenaScene {
+
+    var phaseSteward: PhaseSteward {
+        if let existing = objc_getAssociatedObject(self, &SurvivalArenaScene.stewardKey) as? PhaseSteward {
+            return existing
+        }
+        let fresh = PhaseSteward()
+        objc_setAssociatedObject(self, &SurvivalArenaScene.stewardKey, fresh,
+                                 .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        return fresh
+    }
+
+    private static var stewardKey: UInt8 = 0
+
+    /// Convenience: transition using the arena's steward
+    func stewardTransition(to next: any PhaseObligation) {
+        phaseSteward.transition(to: next, arena: self)
+    }
+
+    var stewardPhaseTag: ArenaPhaseTag { phaseSteward.tag }
 }

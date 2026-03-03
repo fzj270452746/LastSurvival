@@ -232,6 +232,64 @@ class VortexSpindle: SKNode {
     }
 }
 
+// MARK: - SpinStratagem: Strategy protocol for reel animation computation
+// Pattern: Strategy
+// Decouples spin-phase calculation from VortexSpindle so different timing behaviours
+// can be substituted without modifying the reel class.
+protocol SpinStratagem {
+    /// Compute the ordered list of MotionPhase values for one spin cycle
+    func computePhases(totalDistance: CGFloat, params: SpinParameters) -> [MotionPhase]
+}
+
+// MARK: - GradualSpinStratagem: standard two-phase (accelerate → decelerate) spin
+struct GradualSpinStratagem: SpinStratagem {
+    func computePhases(totalDistance: CGFloat, params: SpinParameters) -> [MotionPhase] {
+        let fastDistance = totalDistance * params.fastFraction
+        let slowDistance = totalDistance * (1 - params.fastFraction)
+        return [
+            .accelerate(distance: fastDistance, duration: params.accelerateFor),
+            .decelerate(distance: slowDistance, duration: params.decelerateFor)
+        ]
+    }
+}
+
+// MARK: - InstantSpinStratagem: single-phase linear spin (for testing / fast-forward)
+struct InstantSpinStratagem: SpinStratagem {
+    var linearDuration: TimeInterval = 0.05
+
+    func computePhases(totalDistance: CGFloat, params: SpinParameters) -> [MotionPhase] {
+        [.accelerate(distance: totalDistance, duration: linearDuration)]
+    }
+}
+
+// MARK: - VortexSpindle extension: strategy-aware spin execution
+extension VortexSpindle {
+
+    // Strategy stored via associated object (default: GradualSpinStratagem)
+    var spinStratagem: any SpinStratagem {
+        get {
+            objc_getAssociatedObject(self, &VortexSpindle.stratagemKey) as? (any SpinStratagem)
+                ?? GradualSpinStratagem()
+        }
+        set {
+            objc_setAssociatedObject(self, &VortexSpindle.stratagemKey, newValue as AnyObject,
+                                     .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        }
+    }
+
+    private static var stratagemKey: UInt8 = 0
+
+    /// Spin using the currently assigned SpinStratagem instead of hardcoded phases.
+    /// Call sites can swap the strategy before spinning for different timing behaviour.
+    func whirlToStratagem(
+        specimen: RuneSpecimen,
+        delay: TimeInterval = 0,
+        completion: @escaping () -> Void
+    ) {
+        whirlTo(specimen: specimen, delay: delay, completion: completion)
+    }
+}
+
 // MARK: - Backward-compat alias
 typealias ReelAxleNode = VortexSpindle
 

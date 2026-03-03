@@ -288,6 +288,13 @@ class VespersGrimoire {
 
     // MARK: - Day settlement pipeline
     func tallySolstice(specimens: [RuneSpecimen]) -> DiurnalReckoning {
+        // Delegate to CalcinePipeline — all original logic is preserved inside the stages.
+        // The direct imperative implementation below is kept as a commented reference.
+        return CalcinePipeline.standard.settle(grimoire: self, specimens: specimens)
+    }
+
+    // MARK: - Original direct settlement logic (preserved for reference — now executed via pipeline stages)
+    private func tallySolsticeDirect(specimens: [RuneSpecimen]) -> DiurnalReckoning {
         var ledger = DiurnalReckoning()
 
         // 1. Tally raw counts from reel results
@@ -429,6 +436,179 @@ struct DiurnalReckoning {
     }
 
     var summaryLines: [String] { compendiumLines }
+}
+
+// MARK: - ReckoningContext: mutable context object passed through the CalcinePipeline
+// Each AnvilStage receives this, mutates it, and passes it to the next stage.
+struct ReckoningContext {
+    var grimoire:       VespersGrimoire   // strong reference — stages mutate grimoire state directly
+    var specimens:      [RuneSpecimen]    // reel results for this day
+    var ledger:         DiurnalReckoning  // accumulated settlement report
+    var multiplier:     Int               // 1 = quiescent, 2 = fraught
+    var rawManna:       Int = 0
+    var rawBrine:       Int = 0
+    var rawFalchion:    Int = 0
+    var rawSpecter:     Int = 0
+    var rawPilgrim:     Int = 0
+
+    init(grimoire: VespersGrimoire, specimens: [RuneSpecimen]) {
+        self.grimoire   = grimoire
+        self.specimens  = specimens
+        self.ledger     = DiurnalReckoning()
+        self.multiplier = grimoire.sortieRegime == .fraught ? 2 : 1
+    }
+}
+
+// MARK: - AnvilStage: Pipeline stage protocol
+// Pattern: Pipeline (Chain of Responsibility variant)
+// Each stage handles exactly one concern in the day-settlement sequence.
+protocol AnvilStage {
+    func process(context: inout ReckoningContext)
+}
+
+// MARK: - Concrete AnvilStage implementations (low-frequency naming)
+
+/// Stage 1 — Tally raw symbol counts from reel results
+struct HarvestAnvilStage: AnvilStage {
+    func process(context: inout ReckoningContext) {
+        context.specimens.forEach { specimen in
+            switch specimen {
+            case .manna:    context.rawManna    += 1
+            case .brine:    context.rawBrine    += 1
+            case .falchion: context.rawFalchion += 1
+            case .specter:  context.rawSpecter  += 1
+            case .pilgrim:  context.rawPilgrim  += 1
+            }
+        }
+        // Apply foray multiplier to resource yields
+        let gainManna    = context.rawManna    * context.multiplier
+        let gainBrine    = context.rawBrine    * context.multiplier
+        let gainFalchion = context.rawFalchion * context.multiplier
+
+        context.grimoire.mannaCache    += gainManna
+        context.grimoire.brineCache    += gainBrine
+        context.grimoire.falchionCache += gainFalchion
+
+        context.ledger.mannaHarvested    = gainManna
+        context.ledger.brineHarvested    = gainBrine
+        context.ledger.falchionHarvested = gainFalchion
+    }
+}
+
+/// Stage 2 — Resolve specter (zombie) combat: weapons block 1:1
+struct SpecterAnvilStage: AnvilStage {
+    func process(context: inout ReckoningContext) {
+        let blocked         = min(context.grimoire.falchionCache, context.rawSpecter)
+        let penetrating     = context.rawSpecter - blocked
+        context.grimoire.falchionCache -= blocked
+        context.grimoire.specterTally  += context.rawSpecter
+
+        context.ledger.specterCount       = context.rawSpecter
+        context.ledger.ichorLostToSpecter = penetrating
+        if penetrating > 0 { context.grimoire.ichor -= penetrating }
+    }
+}
+
+/// Stage 3 — Credit pilgrim (survivor) encounters
+struct PilgrimAnvilStage: AnvilStage {
+    func process(context: inout ReckoningContext) {
+        context.grimoire.pilgrimCount += context.rawPilgrim
+        context.grimoire.pilgrimTally += context.rawPilgrim
+        context.ledger.pilgrimHarvested = context.rawPilgrim
+    }
+}
+
+/// Stage 4 — Deduct daily consumption (food 1/day, water 1+heat/day)
+struct ConsumptionAnvilStage: AnvilStage {
+    func process(context: inout ReckoningContext) {
+        let waterDemand = 1 + context.grimoire.etherClimate.brineDrainBonus
+        let foodDemand  = 1
+
+        if context.grimoire.mannaCache >= foodDemand {
+            context.grimoire.mannaCache -= foodDemand
+        } else {
+            let deficit = foodDemand - context.grimoire.mannaCache
+            context.grimoire.mannaCache  = 0
+            context.grimoire.ichor      -= deficit
+            context.ledger.ichorLostToHunger = deficit
+        }
+
+        if context.grimoire.brineCache >= waterDemand {
+            context.grimoire.brineCache -= waterDemand
+        } else {
+            let deficit = waterDemand - context.grimoire.brineCache
+            context.grimoire.brineCache  = 0
+            context.grimoire.ichor      -= deficit
+            context.ledger.ichorLostToThirst = deficit
+        }
+    }
+}
+
+/// Stage 5 — Trigger character passive abilities
+struct LatencyAnvilStage: AnvilStage {
+    func process(context: inout ReckoningContext) {
+        PassiveEffectEngine.apply(
+            caste:          context.grimoire.vocationBlueprint.vocationCaste,
+            dayIndex:       context.grimoire.solsticeCount,
+            specterTotal:   context.grimoire.specterTally,
+            specterThisDay: context.ledger.specterCount,
+            pilgrimTotal:   context.grimoire.pilgrimTally,
+            pilgrimThisDay: context.ledger.pilgrimHarvested,
+            maxHP:          context.grimoire.maxIchor,
+            ichor:          &context.grimoire.ichor,
+            falchionCache:  &context.grimoire.falchionCache,
+            mannaCache:     &context.grimoire.mannaCache,
+            brineCache:     &context.grimoire.brineCache,
+            reckoning:      &context.ledger
+        )
+    }
+}
+
+/// Stage 6 — Clamp HP, check termination conditions, advance day counter
+struct TerminusAnvilStage: AnvilStage {
+    func process(context: inout ReckoningContext) {
+        context.grimoire.ichor = min(context.grimoire.ichor, context.grimoire.maxIchor)
+        if context.grimoire.ichor <= 0 {
+            context.grimoire.ichor       = 0
+            context.grimoire.isDesiccated = true
+        } else if context.grimoire.solsticeCount >= context.grimoire.triumphThreshold {
+            context.grimoire.isTriumphant = true
+        } else {
+            context.grimoire.solsticeCount += 1
+        }
+    }
+}
+
+// MARK: - CalcinePipeline: executes a sequence of AnvilStages
+// Pattern: Pipeline
+final class CalcinePipeline {
+    private let stages: [any AnvilStage]
+
+    // Standard pipeline with all six default stages in canonical order
+    static let standard: CalcinePipeline = CalcinePipeline(stages: [
+        HarvestAnvilStage(),
+        SpecterAnvilStage(),
+        PilgrimAnvilStage(),
+        ConsumptionAnvilStage(),
+        LatencyAnvilStage(),
+        TerminusAnvilStage()
+    ])
+
+    init(stages: [any AnvilStage]) {
+        self.stages = stages
+    }
+
+    /// Run the pipeline: mutates the context through each stage in sequence
+    func run(context: inout ReckoningContext) {
+        stages.forEach { $0.process(context: &context) }
+    }
+
+    /// Convenience: run and return the completed ledger
+    func settle(grimoire: VespersGrimoire, specimens: [RuneSpecimen]) -> DiurnalReckoning {
+        var ctx = ReckoningContext(grimoire: grimoire, specimens: specimens)
+        run(context: &ctx)
+        return ctx.ledger
+    }
 }
 
 // MARK: - Backward-compat aliases

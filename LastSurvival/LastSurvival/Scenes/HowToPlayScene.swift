@@ -2,69 +2,32 @@
 
 import SpriteKit
 
-class HowToPlayScene: SKScene {
+// MARK: - HowToPlayScene: inherits ProstyleProscenium (Template Method)
+class HowToPlayScene: ProstyleProscenium {
 
     override func didMove(to view: SKView) {
-        backgroundColor = PaletteForge.voidBlack
-        buildUI()
+        // Customise substrate alpha to match original values
+        substrateBgAlpha  = 0.12
+        substrateDimAlpha = 0.65
+        headerConfig = ProsceniumHeaderConfig.standard(
+            title: "HOW TO PLAY",
+            tint:  DesignToken.ceruleanVolt,
+            back:  { [weak self] in self?.goBack() }
+        )
+        super.didMove(to: view)
     }
 
-    private func buildUI() {
-        let sc = size.adaptiveScale
-        let safeTop = view?.safeAreaInsets.top ?? 44
-        let safeBot = view?.safeAreaInsets.bottom ?? 34
+    // MARK: - Template Method override
+    override func buildContent() {
+        mountSections()
+    }
 
-        // Background
-        let bg = SKSpriteNode(imageNamed: "bg_main")
-        bg.size = size
-        bg.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        bg.alpha = 0.12
-        bg.zPosition = -1
-        addChild(bg)
+    // MARK: - Sections content
 
-        let overlay = SKShapeNode(rectOf: size)
-        overlay.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        overlay.fillColor = UIColor(red: 0.03, green: 0.02, blue: 0.14, alpha: 0.65)
-        overlay.strokeColor = .clear
-        overlay.zPosition = 0
-        addChild(overlay)
+    private func mountSections() {
+        let sc      = displayScale
+        let safeBot = safeBottomInset
 
-        // ── Header ───────────────────────────────────────────────
-        let headerH: CGFloat = 46 * sc
-        let headerY = size.height - safeTop - headerH / 2
-
-        let headerBg = SKShapeNode(rectOf: CGSize(width: size.width, height: headerH))
-        headerBg.position = CGPoint(x: size.width / 2, y: headerY)
-        headerBg.fillColor = UIColor(red: 0.06, green: 0.03, blue: 0.18, alpha: 0.92)
-        headerBg.strokeColor = .clear
-        headerBg.zPosition = 1
-        addChild(headerBg)
-
-        let headerLine = PaletteForge.makeDivider(width: size.width, color: PaletteForge.neonPink, alpha: 0.45)
-        headerLine.position = CGPoint(x: size.width / 2, y: headerY - headerH / 2)
-        headerLine.zPosition = 2
-        addChild(headerLine)
-
-        // BACK button
-        let backBtn = ObsidianButtonNode(
-            size: CGSize(width: 72 * sc, height: 34 * sc),
-            title: "BACK",
-            fillColor: PaletteForge.midPurple,
-            titleColor: PaletteForge.snowWhite,
-            cornerRadius: 8 * sc
-        )
-        backBtn.position = CGPoint(x: 16 * sc + 36 * sc, y: headerY)
-        backBtn.zPosition = 4
-        backBtn.onTap = { [weak self] in self?.goBack() }
-        addChild(backBtn)
-
-        let titleLbl = PaletteForge.makeLabel(text: "HOW TO PLAY", fontSize: 14 * sc, color: PaletteForge.plasmaBlue, bold: true)
-        titleLbl.position = CGPoint(x: size.width / 2, y: headerY)
-        titleLbl.zPosition = 2
-        addChild(titleLbl)
-
-        // ── Content sections ─────────────────────────────────────
-        // Each section has its own accent color — cycling through the neon palette
         let sections: [(icon: String, title: String, lines: [String], accentColor: UIColor)] = [
             ("🎯", "OBJECTIVE", [
                 "Survive 30 days in the wasteland.",
@@ -101,7 +64,7 @@ class HowToPlayScene: SKScene {
 
         let panelW  = size.width - 24 * sc
         let gap: CGFloat = 8 * sc
-        let contentTop = headerY - headerH / 2 - 12 * sc
+        let contentTop = headerBottomY - 12 * sc
         let contentBot = safeBot + 12 * sc
 
         var curY = contentTop
@@ -139,7 +102,6 @@ class HowToPlayScene: SKScene {
     ) -> SKNode {
         let container = SKNode()
 
-        // Chamfered panel — accent color border (translucent)
         let bg = PaletteForge.makeChamferedPanel(
             size: CGSize(width: panelW, height: panelH),
             chamfer: 8,
@@ -149,7 +111,6 @@ class HowToPlayScene: SKScene {
         )
         container.addChild(bg)
 
-        // Left accent stripe — solid 3pt vertical line in accent color
         let accentBar = SKShapeNode()
         let barPath = CGMutablePath()
         barPath.move(to:    CGPoint(x: -panelW / 2 + 4, y:  panelH / 2 - 7))
@@ -160,7 +121,6 @@ class HowToPlayScene: SKScene {
         accentBar.zPosition = 1
         container.addChild(accentBar)
 
-        // Header row
         let topPad: CGFloat     = 8 * sc
         let headerRowH: CGFloat = 20 * sc
         let headerY = panelH / 2 - topPad - headerRowH / 2
@@ -169,13 +129,11 @@ class HowToPlayScene: SKScene {
         iconLbl.position = CGPoint(x: -panelW / 2 + 18 * sc, y: headerY)
         container.addChild(iconLbl)
 
-        // Title in accent color
         let titleLbl = PaletteForge.makeLabel(text: sec.title, fontSize: 11 * sc, color: sec.accentColor, bold: true)
         titleLbl.position = CGPoint(x: -panelW / 2 + 36 * sc, y: headerY)
         titleLbl.horizontalAlignmentMode = .left
         container.addChild(titleLbl)
 
-        // Body lines
         let lineH: CGFloat = 15 * sc
         let firstLineY = headerY - headerRowH / 2 - 3 * sc - lineH / 2
         let textX = -panelW / 2 + 14 * sc
@@ -196,9 +154,7 @@ class HowToPlayScene: SKScene {
     }
 
     private func goBack() {
-        let scene = TitleVaultScene(size: size)
-        scene.scaleMode = scaleMode
-        view?.presentScene(scene, transition: SKTransition.push(with: .right, duration: 0.35))
+        dispatchEgress(RetreatEgress())
     }
 }
 

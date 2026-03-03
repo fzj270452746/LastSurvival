@@ -215,3 +215,74 @@ extension MantletParley {
         set { onRevoke = newValue }
     }
 }
+
+// MARK: - MantletParleyBuilder: fluent builder for MantletParley dialogs
+// Pattern: Fluent Builder
+// Provides a chainable, descriptive API for constructing dialog overlays.
+// Usage example:
+//   let dialog = MantletParleyBuilder()
+//       .withHeading("ABORT RUN?")
+//       .withBody("Day \(day) progress will be lost.")
+//       .withPrimary(label: "ABORT", color: .red)  { self.quit() }
+//       .withSecondary(label: "CANCEL", color: .purple) { self.resume() }
+//       .build(sceneSize: size)
+//   scene.addChild(dialog)
+class MantletParleyBuilder {
+
+    private var heading        = ""
+    private var bodyText       = ""
+    private var primaryLabel   = "OK"
+    private var primaryColor   = DesignToken.radiantCrimson
+    private var primaryAction: (() -> Void)?
+    private var secondaryLabel: String?
+    private var secondaryColor  = DesignToken.violetShadow
+    private var secondaryAction: (() -> Void)?
+
+    @discardableResult
+    func withHeading(_ text: String) -> Self {
+        heading = text; return self
+    }
+
+    @discardableResult
+    func withBody(_ text: String) -> Self {
+        bodyText = text; return self
+    }
+
+    @discardableResult
+    func withPrimary(
+        label: String,
+        color: UIColor = DesignToken.radiantCrimson,
+        action: @escaping () -> Void
+    ) -> Self {
+        primaryLabel  = label
+        primaryColor  = color
+        primaryAction = action
+        return self
+    }
+
+    @discardableResult
+    func withSecondary(
+        label: String,
+        color: UIColor = DesignToken.violetShadow,
+        action: @escaping () -> Void
+    ) -> Self {
+        secondaryLabel  = label
+        secondaryColor  = color
+        secondaryAction = action
+        return self
+    }
+
+    /// Construct and return the fully configured MantletParley overlay node.
+    func build(sceneSize: CGSize) -> MantletParley {
+        let dialog = MantletParley(
+            sceneSize:   sceneSize,
+            title:       heading,
+            body:        bodyText,
+            confirmText: primaryLabel,
+            cancelText:  secondaryLabel
+        )
+        dialog.onRatify = primaryAction
+        dialog.onRevoke = secondaryAction
+        return dialog
+    }
+}
