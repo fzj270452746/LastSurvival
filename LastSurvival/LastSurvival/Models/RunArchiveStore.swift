@@ -1,61 +1,147 @@
-// RunArchiveStore.swift — Persistent run history & achievement storage
+// RunArchiveStore.swift — Persistent run history & achievement storage (refactored)
 
 import Foundation
 
-// MARK: - Run Record
+// MARK: - PersistenceDriver: protocol abstracting UserDefaults storage
+protocol PersistenceDriver {
+    func load(key: String) -> Data?
+    func save(data: Data, key: String)
+}
 
-struct RunRecord: Codable {
-    let id: UUID
-    let date: Date
-    let archetypeKind: String   // ArchetypeKind.rawValue
-    let daysSurvived: Int
-    let zombiesSlain: Int
-    let survivorsMet: Int
-    let victory: Bool
-
-    init(chronicle: VigilChronicle, victory: Bool) {
-        self.id            = UUID()
-        self.date          = Date()
-        self.archetypeKind = chronicle.archetype.kindling.rawValue
-        self.daysSurvived  = chronicle.diurnalIndex
-        self.zombiesSlain  = chronicle.revenantTally
-        self.survivorsMet  = chronicle.wayfarerTally
-        self.victory       = victory
+// UserDefaultsDriver: default implementation backed by UserDefaults.standard
+struct UserDefaultsDriver: PersistenceDriver {
+    func load(key: String) -> Data? {
+        UserDefaults.standard.data(forKey: key)
+    }
+    func save(data: Data, key: String) {
+        UserDefaults.standard.set(data, forKey: key)
     }
 }
 
-// MARK: - Run Archive Store
+// MARK: - CapacityPolicy: enforces a maximum number of stored records
+struct CapacityPolicy {
+    let maximumEntries: Int
 
-class RunArchiveStore {
-
-    static let shared = RunArchiveStore()
-    private let runsKey = "run_archive_v1"
-
-    private(set) var runs: [RunRecord] = []
-
-    private init() { load() }
-
-    func save(record: RunRecord) {
-        runs.insert(record, at: 0)
-        if runs.count > 50 { runs = Array(runs.prefix(50)) }
-        persist()
-    }
-
-    var bestDays: Int { runs.map(\.daysSurvived).max() ?? 0 }
-    var totalRuns: Int { runs.count }
-    var totalVictories: Int { runs.filter(\.victory).count }
-    var totalZombies: Int { runs.map(\.zombiesSlain).reduce(0, +) }
-
-    private func persist() {
-        if let data = try? JSONEncoder().encode(runs) {
-            UserDefaults.standard.set(data, forKey: runsKey)
-        }
-    }
-
-    private func load() {
-        guard let data = UserDefaults.standard.data(forKey: runsKey),
-              let decoded = try? JSONDecoder().decode([RunRecord].self, from: data)
-        else { return }
-        runs = decoded
+    func enforce<T>(_ entries: [T]) -> [T] {
+        guard entries.count > maximumEntries else { return entries }
+        return Array(entries.prefix(maximumEntries))
     }
 }
+
+// MARK: - RunRecordCoder: serialisation helpers
+enum RunRecordCoder {
+    static func encode(_ records: [ExpeditionLog]) -> Data? {
+        try? JSONEncoder().encode(records)
+    }
+
+    static func decode(from data: Data) -> [ExpeditionLog]? {
+        try? JSONDecoder().decode([ExpeditionLog].self, from: data)
+    }
+}
+
+// MARK: - RunStatistics: computed aggregates over a collection of runs
+struct RunStatistics {
+    let records: [ExpeditionLog]
+
+    var bestDaysCount:  Int { records.map(\.solsticeEndured).max() ?? 0 }
+    var totalRunCount:  Int { records.count }
+    var victoryCount:   Int { records.filter(\.triumph).count }
+    var zombieKillSum:  Int { records.map(\.spectersVanquished).reduce(0, +) }
+}
+
+// MARK: - ExpeditionLog (Run Record)
+struct ExpeditionLog: Codable {
+    let signum:               UUID
+    let timestamp:            Date
+    let vocationCaste:        String
+    let solsticeEndured:      Int
+    let spectersVanquished:   Int
+    let pilgrimsEncountered:  Int
+    let triumph:              Bool
+
+    init(grimoire: VespersGrimoire, triumph: Bool) {
+        self.signum               = UUID()
+        self.timestamp            = Date()
+        self.vocationCaste        = grimoire.vocationBlueprint.vocationCaste.rawValue
+        self.solsticeEndured      = grimoire.solsticeCount
+        self.spectersVanquished   = grimoire.specterTally
+        self.pilgrimsEncountered  = grimoire.pilgrimTally
+        self.triumph              = triumph
+    }
+}
+
+// MARK: - AnnalsDepository (Run Archive Store)
+class AnnalsDepository {
+
+    static let shared = AnnalsDepository()
+
+    private let storageKey     = "run_archive_v1"
+    private let capacityPolicy = CapacityPolicy(maximumEntries: 50)
+    private let storage:         PersistenceDriver
+
+    private(set) var expeditions: [ExpeditionLog] = []
+
+    // Designated init (testable via dependency injection)
+    init(driver: PersistenceDriver = UserDefaultsDriver()) {
+        self.storage = driver
+        loadFromStorage()
+    }
+
+    // MARK: - Write
+    func inscribe(log: ExpeditionLog) {
+        // Prepend newest run, then apply capacity cap
+        let candidate  = [log] + expeditions
+        expeditions    = capacityPolicy.enforce(candidate)
+        persistToStorage()
+    }
+
+    // MARK: - Statistics
+    var statistics: RunStatistics { RunStatistics(records: expeditions) }
+
+    var peakSolstice:     Int { statistics.bestDaysCount }
+    var totalExpeditions: Int { statistics.totalRunCount }
+    var totalTriumphs:    Int { statistics.victoryCount  }
+    var totalSpecters:    Int { statistics.zombieKillSum }
+
+    // MARK: - Private I/O
+
+    private func loadFromStorage() {
+        guard let data    = storage.load(key: storageKey),
+              let decoded = RunRecordCoder.decode(from: data) else { return }
+        expeditions = decoded
+    }
+
+    private func persistToStorage() {
+        guard let encoded = RunRecordCoder.encode(expeditions) else { return }
+        storage.save(data: encoded, key: storageKey)
+    }
+
+    // Legacy private names used during refactoring
+    private func calcify()  { persistToStorage() }
+    private func excavate() { loadFromStorage()   }
+}
+
+// MARK: - Backward-compat aliases
+
+extension ExpeditionLog {
+    init(chronicle: VespersGrimoire, victory: Bool) {
+        self.init(grimoire: chronicle, triumph: victory)
+    }
+    var victory:       Bool   { triumph }
+    var archetypeKind: String { vocationCaste }
+    var daysSurvived:  Int    { solsticeEndured }
+    var zombiesSlain:  Int    { spectersVanquished }
+    var survivorsMet:  Int    { pilgrimsEncountered }
+    var date:          Date   { timestamp }
+}
+
+extension AnnalsDepository {
+    var totalRuns:      Int              { totalExpeditions }
+    var bestDays:       Int              { peakSolstice }
+    var totalVictories: Int              { totalTriumphs }
+    var runs:           [ExpeditionLog]  { expeditions }
+    func save(record: ExpeditionLog)     { inscribe(log: record) }
+}
+
+typealias RunRecord       = ExpeditionLog
+typealias RunArchiveStore = AnnalsDepository

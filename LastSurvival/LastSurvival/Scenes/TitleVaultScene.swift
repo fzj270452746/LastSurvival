@@ -1,203 +1,319 @@
-// TitleVaultScene.swift — Title / main menu screen
+// TitleVaultScene.swift — HarbingerDuskScene: title / main menu (refactored)
 
 import SpriteKit
 
-class TitleVaultScene: SKScene {
+// MARK: - MenuItemDescriptor: declarative button specification
+private struct MenuItemDescriptor {
+    let title:      String
+    let fillColor:  UIColor
+    let textColor:  UIColor
+    let size:       CGSize
+    let yFraction:  CGFloat   // Y position as fraction of scene height
+    let action:     () -> Void
+}
 
-    override func didMove(to view: SKView) {
-        backgroundColor = PaletteForge.obsidian
-        buildUI()
+// MARK: - BackgroundWeaver: builds ambient decorative background
+private class BackgroundWeaver {
+    private let sceneSize: CGSize
+    private let scale: CGFloat
+
+    init(sceneSize: CGSize, scale: CGFloat) {
+        self.sceneSize = sceneSize
+        self.scale     = scale
     }
 
-    private func buildUI() {
-        let sc = size.adaptiveScale
+    func build(into scene: SKScene) {
+        mountBackdropImage(into: scene)
+        mountDimOverlay(into: scene)
+        mountGridLines(into: scene, count: 8)
+    }
 
-        // Background
-        let bg = SKSpriteNode(imageNamed: "bg_main")
-        bg.size = size
-        bg.position = CGPoint(x: size.width/2, y: size.height/2)
-        bg.alpha = 0.35
-        bg.zPosition = -1
-        addChild(bg)
+    private func mountBackdropImage(into scene: SKScene) {
+        let sprite       = SKSpriteNode(imageNamed: "bg_main")
+        sprite.size      = sceneSize
+        sprite.position  = CGPoint(x: sceneSize.width / 2, y: sceneSize.height / 2)
+        sprite.alpha     = 0.18
+        sprite.zPosition = -1
+        scene.addChild(sprite)
+    }
 
-        // Vignette overlay
-        let vignette = SKShapeNode(rectOf: size)
-        vignette.position = CGPoint(x: size.width/2, y: size.height/2)
-        vignette.fillColor = UIColor(red: 0.02, green: 0.02, blue: 0.05, alpha: 0.55)
-        vignette.strokeColor = .clear
-        vignette.zPosition = 0
-        addChild(vignette)
+    private func mountDimOverlay(into scene: SKScene) {
+        let tint = UIColor(red: 0.04, green: 0.02, blue: 0.14, alpha: 0.72)
+        let overlay       = SKShapeNode(rectOf: sceneSize)
+        overlay.position  = CGPoint(x: sceneSize.width / 2, y: sceneSize.height / 2)
+        overlay.fillColor = tint
+        overlay.strokeColor = .clear
+        overlay.zPosition  = 0
+        scene.addChild(overlay)
+    }
 
-        // Decorative top line
-        let topLine = SKShapeNode()
-        let linePath = CGMutablePath()
-        linePath.move(to: CGPoint(x: size.width * 0.1, y: size.height * 0.82))
-        linePath.addLine(to: CGPoint(x: size.width * 0.9, y: size.height * 0.82))
-        topLine.path = linePath
-        topLine.strokeColor = PaletteForge.cinderGold.withAlphaComponent(0.4)
-        topLine.lineWidth = 1
-        topLine.zPosition = 1
-        addChild(topLine)
-
-        // Subtitle tag
-        let tagLbl = PaletteForge.makeLabel(text: "LAST SLOT SURVIVAL", fontSize: 11 * sc, color: PaletteForge.cinderGold.withAlphaComponent(0.8))
-        tagLbl.position = CGPoint(x: size.width/2, y: size.height * 0.80)
-        tagLbl.zPosition = 2
-        tagLbl.fontName = "AvenirNext-Heavy"
-        let tracking = SKAction.repeatForever(SKAction.sequence([
-            SKAction.fadeAlpha(to: 0.5, duration: 1.2),
-            SKAction.fadeAlpha(to: 1.0, duration: 1.2)
-        ]))
-        tagLbl.run(tracking)
-        addChild(tagLbl)
-
-        // Main title
-        let titleLbl = PaletteForge.makeLabel(text: "LAST", fontSize: 58 * sc, color: PaletteForge.ashWhite, bold: true)
-        titleLbl.position = CGPoint(x: size.width/2, y: size.height * 0.70)
-        titleLbl.zPosition = 2
-        addChild(titleLbl)
-
-        let title2Lbl = PaletteForge.makeLabel(text: "SURVIVAL", fontSize: 38 * sc, color: PaletteForge.cinderGold, bold: true)
-        title2Lbl.position = CGPoint(x: size.width/2, y: size.height * 0.63)
-        title2Lbl.zPosition = 2
-        addChild(title2Lbl)
-
-        // Decorative bottom line
-        let botLine = SKShapeNode()
-        let botPath = CGMutablePath()
-        botPath.move(to: CGPoint(x: size.width * 0.2, y: size.height * 0.60))
-        botPath.addLine(to: CGPoint(x: size.width * 0.8, y: size.height * 0.60))
-        botLine.path = botPath
-        botLine.strokeColor = PaletteForge.cinderGold.withAlphaComponent(0.4)
-        botLine.lineWidth = 1
-        botLine.zPosition = 1
-        addChild(botLine)
-
-        // Flavor text
-        let flavorLbl = PaletteForge.makeLabel(
-            text: "Spin the reels. Survive the apocalypse.",
-            fontSize: 13 * sc,
-            color: PaletteForge.ashWhite.withAlphaComponent(0.7)
-        )
-        flavorLbl.position = CGPoint(x: size.width/2, y: size.height * 0.54)
-        flavorLbl.zPosition = 2
-        addChild(flavorLbl)
-
-        // Start button
-        let btnW = 220 * sc
-        let btnH = 54 * sc
-        let startBtn = ObsidianButtonNode(
-            size: CGSize(width: btnW, height: btnH),
-            title: "START GAME",
-            fillColor: PaletteForge.cinderGold,
-            titleColor: PaletteForge.obsidian,
-            cornerRadius: 27 * sc
-        )
-        startBtn.position = CGPoint(x: size.width/2, y: size.height * 0.40)
-        startBtn.zPosition = 3
-        startBtn.onTap = { [weak self] in self?.goToCharacterSelect() }
-        addChild(startBtn)
-
-        // Pulse glow on button
-        startBtn.run(SKAction.repeatForever(SKAction.sequence([
-            SKAction.scale(to: 1.03, duration: 0.9),
-            SKAction.scale(to: 1.0, duration: 0.9)
-        ])))
-
-        // ── Secondary buttons row ────────────────────────────────
-        // Use full screen width so "ACHIEVEMENTS" text doesn't overflow
-        let secBtnW = (size.width - 32 * sc) / 2   // 14pt margin each side, 4pt gap
-        let secBtnH = 40 * sc
-        let secY = size.height * 0.29
-
-        let historyBtn = ObsidianButtonNode(
-            size: CGSize(width: secBtnW, height: secBtnH),
-            title: "HISTORY",
-            fillColor: PaletteForge.slateGray,
-            titleColor: PaletteForge.ashWhite,
-            cornerRadius: 10 * sc
-        )
-        historyBtn.position = CGPoint(x: 14 * sc + secBtnW / 2, y: secY)
-        historyBtn.zPosition = 3
-        historyBtn.onTap = { [weak self] in self?.goToHistory() }
-        addChild(historyBtn)
-
-        let achBtn = ObsidianButtonNode(
-            size: CGSize(width: secBtnW, height: secBtnH),
-            title: "ACHIEVEMENTS",
-            fillColor: PaletteForge.slateGray,
-            titleColor: PaletteForge.cinderGold,
-            cornerRadius: 10 * sc
-        )
-        achBtn.position = CGPoint(x: size.width - 14 * sc - secBtnW / 2, y: secY)
-        achBtn.zPosition = 3
-        achBtn.onTap = { [weak self] in self?.goToAchievements() }
-        addChild(achBtn)
-
-        let howBtn = ObsidianButtonNode(
-            size: CGSize(width: btnW, height: secBtnH),
-            title: "HOW TO PLAY",
-            fillColor: PaletteForge.obsidian,
-            titleColor: PaletteForge.ashWhite.withAlphaComponent(0.85),
-            cornerRadius: 10 * sc
-        )
-        howBtn.position = CGPoint(x: size.width/2, y: size.height * 0.20)
-        howBtn.zPosition = 3
-        howBtn.onTap = { [weak self] in self?.goToHowToPlay() }
-        addChild(howBtn)
-
-        // Best run blurb (if any runs exist)
-        let store = RunArchiveStore.shared
-        if store.totalRuns > 0 {
-            let blurb = "Best: \(store.bestDays) days  |  Runs: \(store.totalRuns)  |  Victories: \(store.totalVictories)"
-            let bestLbl = PaletteForge.makeLabel(text: blurb, fontSize: 10 * sc, color: PaletteForge.ashWhite.withAlphaComponent(0.5))
-            bestLbl.position = CGPoint(x: size.width/2, y: size.height * 0.12)
-            bestLbl.zPosition = 2
-            addChild(bestLbl)
+    private func mountGridLines(into scene: SKScene, count: Int) {
+        (0..<count).forEach { index in
+            let yPos = sceneSize.height * CGFloat(index) / CGFloat(count)
+            let path = CGMutablePath()
+            path.move(to:    CGPoint(x: 0, y: yPos))
+            path.addLine(to: CGPoint(x: sceneSize.width, y: yPos))
+            let gridLine = SKShapeNode(path: path)
+            gridLine.strokeColor = DesignToken.radiantCrimson.withAlphaComponent(0.04)
+            gridLine.lineWidth   = 1
+            gridLine.zPosition   = 0
+            scene.addChild(gridLine)
         }
+    }
+}
+
+// MARK: - StatsDisplay: best-run statistics footer
+private class StatsDisplay {
+    private let archive = AnnalsDepository.shared
+    private let scale: CGFloat
+
+    init(scale: CGFloat) { self.scale = scale }
+
+    func build(into scene: SKScene, sceneSize: CGSize) {
+        guard archive.totalExpeditions > 0 else { return }
+        let stats  = archive.statistics
+        let blurb  = "BEST: \(stats.bestDaysCount) DAYS  |  RUNS: \(stats.totalRunCount)  |  VICTORIES: \(stats.victoryCount)"
+        let label  = TypographyScale.labelNode(
+            text:   blurb,
+            size:   9 * scale,
+            tint:   DesignToken.ashNebula
+        )
+        label.position  = CGPoint(x: sceneSize.width / 2, y: sceneSize.height * 0.10)
+        label.zPosition = 2
+        scene.addChild(label)
+    }
+}
+
+// MARK: - HarbingerDuskScene: main menu
+class HarbingerDuskScene: SKScene {
+
+    override func didMove(to view: SKView) {
+        backgroundColor = DesignToken.cosmicInk
+        assembleScene()
+    }
+
+    private func assembleScene() {
+        let sc = size.calibration
+
+        // Background layer
+        BackgroundWeaver(sceneSize: size, scale: sc).build(into: self)
+
+        // Branding region
+        assembleBranding(sc: sc)
+
+        // Menu buttons (data-driven)
+        assembleMenuButtons(sc: sc)
+
+        // Statistics footer
+        StatsDisplay(scale: sc).build(into: self, sceneSize: size)
 
         // Version label
-        let verLbl = PaletteForge.makeLabel(text: "v1.0", fontSize: 10 * sc, color: PaletteForge.ashWhite.withAlphaComponent(0.3))
-        verLbl.position = CGPoint(x: size.width/2, y: size.height * 0.06)
-        verLbl.zPosition = 2
-        addChild(verLbl)
+        let verLabel  = TypographyScale.labelNode(
+            text: "v1.0",
+            size: 9 * sc,
+            tint: DesignToken.ashNebula.withAlphaComponent(0.5)
+        )
+        verLabel.position  = CGPoint(x: size.width / 2, y: size.height * 0.05)
+        verLabel.zPosition = 2
+        addChild(verLabel)
+    }
 
-        // Entrance animation
-        let nodes: [SKNode] = [titleLbl, title2Lbl, flavorLbl, startBtn]
-        for (i, n) in nodes.enumerated() {
-            n.alpha = 0
-            n.run(SKAction.sequence([
-                SKAction.wait(forDuration: 0.3 + Double(i) * 0.15),
+    // MARK: - Branding assembly
+
+    private func assembleBranding(sc: CGFloat) {
+        // Top separator
+        let topSep = GeometryForge.dividerLine(span: size.width * 0.85, tint: DesignToken.radiantCrimson, opacity: 0.5)
+        topSep.position  = CGPoint(x: size.width / 2, y: size.height * 0.82)
+        topSep.zPosition = 2
+        addChild(topSep)
+
+        // Tag line with blink animation
+        let tagLabel = TypographyScale.labelNode(
+            text:   "// SLOT SURVIVAL SYSTEM v1.0",
+            size:   10 * sc,
+            tint:   DesignToken.ceruleanVolt.withAlphaComponent(0.85)
+        )
+        tagLabel.position  = CGPoint(x: size.width / 2, y: size.height * 0.79)
+        tagLabel.zPosition = 2
+        tagLabel.run(SKAction.repeatForever(SKAction.sequence([
+            SKAction.fadeAlpha(to: 0.35, duration: 1.5),
+            SKAction.fadeAlpha(to: 1.0,  duration: 1.5)
+        ])))
+        addChild(tagLabel)
+
+        // Primary title word
+        let wordLast = TypographyScale.labelNode(
+            text:   "LAST",
+            size:   64 * sc,
+            tint:   DesignToken.radiantCrimson,
+            weight: .headline
+        )
+        wordLast.position  = CGPoint(x: size.width / 2, y: size.height * 0.70)
+        wordLast.zPosition = 2
+        addChild(wordLast)
+
+        // Secondary title word
+        let wordSurvival = TypographyScale.labelNode(
+            text:   "SURVIVAL",
+            size:   36 * sc,
+            tint:   DesignToken.frostSheen,
+            weight: .headline
+        )
+        wordSurvival.position  = CGPoint(x: size.width / 2, y: size.height * 0.62)
+        wordSurvival.zPosition = 2
+        addChild(wordSurvival)
+
+        // Blue sub-divider
+        let subDiv = GeometryForge.dividerLine(span: size.width * 0.65, tint: DesignToken.ceruleanVolt, opacity: 0.45)
+        subDiv.position  = CGPoint(x: size.width / 2, y: size.height * 0.58)
+        subDiv.zPosition = 2
+        addChild(subDiv)
+
+        // Flavor text
+        let flavorText = TypographyScale.labelNode(
+            text: "Spin the reels. Survive the apocalypse.",
+            size: 12 * sc,
+            tint: DesignToken.ashNebula
+        )
+        flavorText.position  = CGPoint(x: size.width / 2, y: size.height * 0.53)
+        flavorText.zPosition = 2
+        addChild(flavorText)
+
+        // Entrance cascade: title, subtitle, flavor text
+        let entranceTargets: [SKNode] = [wordLast, wordSurvival, flavorText]
+        entranceTargets.enumerated().forEach { index, node in
+            node.alpha = 0
+            node.run(SKAction.sequence([
+                SKAction.wait(forDuration: 0.25 + Double(index) * 0.12),
                 SKAction.group([
-                    SKAction.fadeIn(withDuration: 0.4),
-                    SKAction.moveBy(x: 0, y: 12 * sc, duration: 0.4)
+                    SKAction.fadeIn(withDuration: 0.38),
+                    SKAction.moveBy(x: 0, y: 10 * sc, duration: 0.38)
                 ])
             ]))
         }
     }
 
-    private func goToCharacterSelect() {
-        let next = ArchetypeVaultScene(size: size)
-        next.scaleMode = scaleMode
-        let trans = SKTransition.push(with: .left, duration: 0.4)
-        view?.presentScene(next, transition: trans)
+    // MARK: - Menu button assembly (data-driven)
+
+    private func assembleMenuButtons(sc: CGFloat) {
+        let primaryW = 230 * sc
+        let primaryH = 56 * sc
+        let secondaryW = (size.width - 32 * sc) / 2
+        let secondaryH = 42 * sc
+
+        // Declare all buttons as descriptors
+        let descriptors: [MenuItemDescriptor] = [
+            MenuItemDescriptor(
+                title:     "START GAME",
+                fillColor: DesignToken.radiantCrimson,
+                textColor: DesignToken.frostSheen,
+                size:      CGSize(width: primaryW, height: primaryH),
+                yFraction: 0.40,
+                action:    { [weak self] in self?.navigateToCharacterSelect() }
+            ),
+            MenuItemDescriptor(
+                title:     "HOW TO PLAY",
+                fillColor: DesignToken.cosmicInk,
+                textColor: DesignToken.ceruleanVolt,
+                size:      CGSize(width: primaryW, height: secondaryH),
+                yFraction: 0.18,
+                action:    { [weak self] in self?.navigateToTutorial() }
+            )
+        ]
+
+        // Create primary + how-to buttons (centered)
+        var spawnedNodes: [SKNode] = []
+        descriptors.forEach { descriptor in
+            let btn = ClaviculaNodelet(
+                size:        descriptor.size,
+                title:       descriptor.title,
+                fillColor:   descriptor.fillColor,
+                titleColor:  descriptor.textColor,
+                cornerRadius: descriptor.size.height * 0.5
+            )
+            btn.position  = CGPoint(x: size.width / 2, y: size.height * descriptor.yFraction)
+            btn.zPosition = 3
+            btn.onImpact  = descriptor.action
+            addChild(btn)
+            spawnedNodes.append(btn)
+        }
+
+        // Pulse animation on START button
+        spawnedNodes.first?.run(SKAction.repeatForever(SKAction.sequence([
+            SKAction.scale(to: 1.04, duration: 1.0),
+            SKAction.scale(to: 1.00, duration: 1.0)
+        ])))
+
+        // Side-by-side secondary buttons
+        let secY = size.height * 0.28
+
+        let historyBtn = ClaviculaNodelet(
+            size:        CGSize(width: secondaryW, height: secondaryH),
+            title:       "HISTORY",
+            fillColor:   DesignToken.violetShadow,
+            titleColor:  DesignToken.frostSheen,
+            cornerRadius: 10 * sc
+        )
+        historyBtn.position  = CGPoint(x: 16 * sc + secondaryW / 2, y: secY)
+        historyBtn.zPosition = 3
+        historyBtn.onImpact  = { [weak self] in self?.navigateToHistory() }
+        addChild(historyBtn)
+        spawnedNodes.append(historyBtn)
+
+        let achBtn = ClaviculaNodelet(
+            size:        CGSize(width: secondaryW, height: secondaryH),
+            title:       "ACHIEVEMENTS",
+            fillColor:   DesignToken.violetShadow,
+            titleColor:  DesignToken.phosphorLime,
+            cornerRadius: 10 * sc
+        )
+        achBtn.position  = CGPoint(x: size.width - 16 * sc - secondaryW / 2, y: secY)
+        achBtn.zPosition = 3
+        achBtn.onImpact  = { [weak self] in self?.navigateToAchievements() }
+        addChild(achBtn)
+        spawnedNodes.append(achBtn)
+
+        // Entrance fade-in for all buttons (staggered)
+        spawnedNodes.enumerated().forEach { index, node in
+            node.alpha = 0
+            node.run(SKAction.sequence([
+                SKAction.wait(forDuration: 0.25 + Double(index) * 0.12),
+                SKAction.fadeIn(withDuration: 0.38)
+            ]))
+        }
     }
 
-    private func goToHistory() {
-        let next = RunHistoryScene(size: size)
-        next.scaleMode = scaleMode
-        view?.presentScene(next, transition: SKTransition.push(with: .left, duration: 0.35))
+    // MARK: - Navigation helpers
+
+    private func navigateToCharacterSelect() {
+        let destination = VestibuleClaspScene(size: size)
+        destination.scaleMode = scaleMode
+        view?.presentScene(destination, transition: SKTransition.push(with: .left, duration: 0.4))
     }
 
-    private func goToAchievements() {
-        let next = AchievementScene(size: size)
-        next.scaleMode = scaleMode
-        view?.presentScene(next, transition: SKTransition.push(with: .left, duration: 0.35))
+    private func navigateToHistory() {
+        let destination = ChronolithScrollScene(size: size)
+        destination.scaleMode = scaleMode
+        view?.presentScene(destination, transition: SKTransition.push(with: .left, duration: 0.35))
     }
 
-    private func goToHowToPlay() {
-        let next = HowToPlayScene(size: size)
-        next.scaleMode = scaleMode
-        view?.presentScene(next, transition: SKTransition.push(with: .left, duration: 0.35))
+    private func navigateToAchievements() {
+        let destination = PalimpsestGildScene(size: size)
+        destination.scaleMode = scaleMode
+        view?.presentScene(destination, transition: SKTransition.push(with: .left, duration: 0.35))
     }
+
+    private func navigateToTutorial() {
+        let destination = VademecumScrollScene(size: size)
+        destination.scaleMode = scaleMode
+        view?.presentScene(destination, transition: SKTransition.push(with: .left, duration: 0.35))
+    }
+
+    // Legacy navigation aliases
+    private func proceedToVestibule()  { navigateToCharacterSelect() }
+    private func proceedToChronolith() { navigateToHistory() }
+    private func proceedToPalimpsest() { navigateToAchievements() }
+    private func proceedToVademecum()  { navigateToTutorial() }
 }
+
+typealias TitleVaultScene = HarbingerDuskScene

@@ -1,368 +1,465 @@
-// VigilChronicle.swift — Core game state & data models
+// VigilChronicle.swift — Core game state & data models (refactored)
 
 import Foundation
 
-// MARK: - Glyph (Slot Icon Types)
-
-enum GlyphVariant: CaseIterable {
-    case provender   // food
-    case aquifer     // water
-    case armament    // weapon
-    case revenant    // zombie
-    case wayfarer    // survivor
+// MARK: - RuneSpecimen (Slot Icon Types)
+enum RuneSpecimen: CaseIterable {
+    case manna      // food
+    case brine      // water
+    case falchion   // weapon
+    case specter    // zombie
+    case pilgrim    // survivor
 }
 
-// MARK: - Archetype (Character)
-
-enum ArchetypeKind: String, CaseIterable {
-    case chirurgeon  // doctor
-    case legionary   // soldier
-    case artificer   // engineer
+// MARK: - VocationCaste (Character Class)
+enum VocationCaste: String, CaseIterable {
+    case salver    // doctor
+    case pikeman   // soldier
+    case tinker    // engineer
 }
 
-struct SurvivorArchetype {
-    let kindling: ArchetypeKind
-    let epithet: String
-    let portraitAsset: String
-    let vitaBonus: Int
-    let armamentBonus: Int
-    let provenderBonus: Int
-    let wayfarerBonus: Int
-    let passiveDescription: String
+// MARK: - WayfareBlueprint: character archetype definition
+struct WayfareBlueprint {
+    let vocationCaste:  VocationCaste
+    let sobriquet:      String
+    let effigyAsset:    String
+    let ichorBonus:     Int
+    let falchionBonus:  Int
+    let mannaBonus:     Int
+    let pilgrimBonus:   Int
+    let latentAptitude: String
 
-    static let chirurgeon = SurvivorArchetype(
-        kindling: .chirurgeon,
-        epithet: "Doctor",
-        portraitAsset: "char_doctor_avatar",
-        vitaBonus: 2,
-        armamentBonus: -1,
-        provenderBonus: 0,
-        wayfarerBonus: 0,
-        passiveDescription: "Recover 1 HP every 3 days"
+    static let medic = WayfareBlueprint(
+        vocationCaste:  .salver,
+        sobriquet:      "Doctor",
+        effigyAsset:    "char_doctor_avatar",
+        ichorBonus:     2,
+        falchionBonus: -1,
+        mannaBonus:     0,
+        pilgrimBonus:   0,
+        latentAptitude: "Recover 1 HP every 3 days"
     )
-    static let legionary = SurvivorArchetype(
-        kindling: .legionary,
-        epithet: "Soldier",
-        portraitAsset: "char_soldier_avatar",
-        vitaBonus: 0,
-        armamentBonus: 2,
-        provenderBonus: -1,
-        wayfarerBonus: 0,
-        passiveDescription: "Gain +1 weapon per 3 zombies slain"
+    static let combatant = WayfareBlueprint(
+        vocationCaste:  .pikeman,
+        sobriquet:      "Soldier",
+        effigyAsset:    "char_soldier_avatar",
+        ichorBonus:     0,
+        falchionBonus:  2,
+        mannaBonus:    -1,
+        pilgrimBonus:   0,
+        latentAptitude: "Gain +1 weapon per 3 zombies slain"
     )
-    static let artificer = SurvivorArchetype(
-        kindling: .artificer,
-        epithet: "Engineer",
-        portraitAsset: "char_engineer_avatar",
-        vitaBonus: 0,
-        armamentBonus: 0,
-        provenderBonus: 1,
-        wayfarerBonus: 1,
-        passiveDescription: "Gain +1 resource per 3 survivors"
+    static let artisan = WayfareBlueprint(
+        vocationCaste:  .tinker,
+        sobriquet:      "Engineer",
+        effigyAsset:    "char_engineer_avatar",
+        ichorBonus:     0,
+        falchionBonus:  0,
+        mannaBonus:     1,
+        pilgrimBonus:   1,
+        latentAptitude: "Gain +1 resource per 3 survivors"
     )
 
-    static func fromKind(_ k: ArchetypeKind) -> SurvivorArchetype {
+    static func fromCaste(_ k: VocationCaste) -> WayfareBlueprint {
         switch k {
-        case .chirurgeon: return .chirurgeon
-        case .legionary:  return .legionary
-        case .artificer:  return .artificer
+        case .salver:  return .medic
+        case .pikeman: return .combatant
+        case .tinker:  return .artisan
         }
     }
 }
 
-// MARK: - Aether Condition (Weather)
+// MARK: - WeightTable: encapsulates weighted random sampling
+struct WeightTable {
+    private let table: [RuneSpecimen: Int]
 
-enum AetherCondition: CaseIterable {
-    case lucent      // sunny
-    case deluge      // rain
-    case scorching   // heat
-    case murk        // fog
-    case haboob      // sandstorm
+    init(weights: [RuneSpecimen: Int]) {
+        self.table = weights
+    }
 
-    var iconAsset: String {
+    // Draw a single specimen using weighted probability
+    func draw() -> RuneSpecimen {
+        let totalWeight = table.values.reduce(0, +)
+        guard totalWeight > 0 else { return .manna }
+        var cursor = Int.random(in: 0..<totalWeight)
+        for (specimen, weight) in table {
+            cursor -= weight
+            if cursor < 0 { return specimen }
+        }
+        return .manna
+    }
+
+    // Draw multiple specimens
+    func sample(count: Int) -> [RuneSpecimen] {
+        (0..<count).map { _ in draw() }
+    }
+
+    // Return a new table with a delta patch applied (floor of 1 per entry)
+    func applying(patch: [RuneSpecimen: Int]) -> WeightTable {
+        var updated = table
+        patch.forEach { specimen, delta in
+            updated[specimen] = max(1, (updated[specimen] ?? 0) + delta)
+        }
+        return WeightTable(weights: updated)
+    }
+
+    // Expose raw table for legacy callers
+    var rawWeights: [RuneSpecimen: Int] { table }
+}
+
+// MARK: - WeightModifier: describes how a context alters base weights
+struct WeightModifier {
+    let deltas: [RuneSpecimen: Int]
+    static let identity = WeightModifier(deltas: [:])
+}
+
+// MARK: - EtherealClimate (Weather)
+enum EtherealClimate: CaseIterable {
+    case pellucid    // sunny
+    case inundation  // rain
+    case calefaction // heat
+    case nebulosity  // fog
+    case simoom      // sandstorm
+
+    var sigillumAsset: String {
         switch self {
-        case .lucent:    return "icon_weather_sunny"
-        case .deluge:    return "icon_weather_rain"
-        case .scorching: return "icon_weather_heat"
-        case .murk:      return "icon_weather_fog"
-        case .haboob:    return "icon_weather_sandstorm"
+        case .pellucid:    return "icon_weather_sunny"
+        case .inundation:  return "icon_weather_rain"
+        case .calefaction: return "icon_weather_heat"
+        case .nebulosity:  return "icon_weather_fog"
+        case .simoom:      return "icon_weather_sandstorm"
         }
     }
 
-    var displayName: String {
+    var appellative: String {
         switch self {
-        case .lucent:    return "Sunny"
-        case .deluge:    return "Heavy Rain"
-        case .scorching: return "Heat Wave"
-        case .murk:      return "Dense Fog"
-        case .haboob:    return "Sandstorm"
+        case .pellucid:    return "Sunny"
+        case .inundation:  return "Heavy Rain"
+        case .calefaction: return "Heat Wave"
+        case .nebulosity:  return "Dense Fog"
+        case .simoom:      return "Sandstorm"
         }
     }
 
-    // Returns adjusted weights [food, water, weapon, zombie, survivor]
-    func adjustedWeights(base: [GlyphVariant: Int]) -> [GlyphVariant: Int] {
-        var w = base
+    // Weather-specific weight deltas, expressed as a pure modifier
+    var weightModifier: WeightModifier {
         switch self {
-        case .lucent:
-            break
-        case .deluge:
-            w[.aquifer]  = (w[.aquifer]  ?? 25) + 30
-            w[.provender] = max(1, (w[.provender] ?? 25) - 10)
-            w[.revenant]  = max(1, (w[.revenant]  ?? 20) - 10)
-        case .scorching:
-            w[.provender] = (w[.provender] ?? 25) + 10
-        case .murk:
-            w[.revenant]  = (w[.revenant]  ?? 20) + 25
-            w[.armament]  = (w[.armament]  ?? 15) + 10
-        case .haboob:
-            w[.provender] = max(1, (w[.provender] ?? 25) - 10)
-            w[.aquifer]   = max(1, (w[.aquifer]   ?? 25) - 10)
-            w[.armament]  = max(1, (w[.armament]  ?? 15) - 10)
-            w[.wayfarer]  = max(1, (w[.wayfarer]  ?? 15) - 10)
-            w[.revenant]  = (w[.revenant]  ?? 20) + 20
+        case .pellucid:
+            return .identity
+        case .inundation:
+            return WeightModifier(deltas: [.brine: +30, .manna: -10, .specter: -10])
+        case .calefaction:
+            return WeightModifier(deltas: [.manna: +10])
+        case .nebulosity:
+            return WeightModifier(deltas: [.specter: +25, .falchion: +10])
+        case .simoom:
+            return WeightModifier(deltas: [
+                .manna: -10, .brine: -10, .falchion: -10, .pilgrim: -10, .specter: +20
+            ])
         }
-        return w
     }
 
-    // Extra water consumption
-    var aquiferDrainBonus: Int {
-        return self == .scorching ? 1 : 0
+    // Legacy method — preserved for call-site compat
+    func modulatedWeights(base: [RuneSpecimen: Int]) -> [RuneSpecimen: Int] {
+        WeightTable(weights: base).applying(patch: weightModifier.deltas).rawWeights
+    }
+
+    var brineDrainBonus: Int { self == .calefaction ? 1 : 0 }
+}
+
+// MARK: - SortieRegime (Exploration Mode)
+enum SortieRegime {
+    case quiescent // safe search
+    case fraught   // dangerous explore
+}
+
+// MARK: - PassiveEffectEngine: pure logic for character passive abilities
+private enum PassiveEffectEngine {
+
+    static func apply(
+        caste:           VocationCaste,
+        dayIndex:        Int,
+        specterTotal:    Int,
+        specterThisDay:  Int,
+        pilgrimTotal:    Int,
+        pilgrimThisDay:  Int,
+        maxHP:           Int,
+        ichor:           inout Int,
+        falchionCache:   inout Int,
+        mannaCache:      inout Int,
+        brineCache:      inout Int,
+        reckoning:       inout DiurnalReckoning
+    ) {
+        switch caste {
+
+        case .salver:
+            // Healer: restore 1 HP on every 3rd day
+            guard dayIndex % 3 == 0 else { break }
+            ichor = min(ichor + 1, maxHP)
+            reckoning.latentMend = 1
+
+        case .pikeman:
+            // Soldier: earn a weapon for each new zombie-kill milestone (per 3)
+            let milestonesBefore = (specterTotal - specterThisDay) / 3
+            let milestonesAfter  = specterTotal / 3
+            let earned           = milestonesAfter - milestonesBefore
+            guard earned > 0 else { break }
+            falchionCache += earned
+            reckoning.latentFalchionBonus = earned
+
+        case .tinker:
+            // Engineer: earn resources for each new survivor milestone (per 3)
+            let milestonesBefore = (pilgrimTotal - pilgrimThisDay) / 3
+            let milestonesAfter  = pilgrimTotal / 3
+            let earned           = milestonesAfter - milestonesBefore
+            guard earned > 0 else { break }
+            mannaCache    += earned
+            brineCache    += earned
+            falchionCache += earned
+            reckoning.latentMannaBonus = earned
+        }
     }
 }
 
-// MARK: - Foray Mode (Exploration)
+// MARK: - VespersGrimoire (Game State)
+class VespersGrimoire {
 
-enum ForayMode {
-    case placid    // safe search
-    case perilous  // dangerous explore
-}
-
-// MARK: - Vigil Chronicle (Game State)
-
-class VigilChronicle {
-    // Base weights
-    static let baseWeights: [GlyphVariant: Int] = [
-        .provender: 25,
-        .aquifer:   25,
-        .armament:  15,
-        .revenant:  20,
-        .wayfarer:  15
+    // Base reel weights before weather/mode adjustments
+    static let runeBaseWeights: [RuneSpecimen: Int] = [
+        .manna:    25,
+        .brine:    25,
+        .falchion: 15,
+        .specter:  20,
+        .pilgrim:  15
     ]
 
-    var archetype: SurvivorArchetype
-    var vitality: Int       // HP
-    var provenderStock: Int // food
-    var aquiferStock: Int   // water
-    var armamentStock: Int  // weapon
-    var wayfarerCount: Int  // survivors
-    var diurnalIndex: Int   // current day
-    var aetherCondition: AetherCondition
-    var forayMode: ForayMode
-    var revenantTally: Int  // total zombies killed (for soldier passive)
-    var wayfarerTally: Int  // total survivors (for engineer passive)
-    var isExpired: Bool     // dead
-    var isVictorious: Bool  // won
+    var vocationBlueprint: WayfareBlueprint
+    var ichor:         Int
+    var mannaCache:    Int
+    var brineCache:    Int
+    var falchionCache: Int
+    var pilgrimCount:  Int
+    var solsticeCount: Int
+    var etherClimate:  EtherealClimate
+    var sortieRegime:  SortieRegime
+    var specterTally:  Int
+    var pilgrimTally:  Int
+    var isDesiccated:  Bool
+    var isTriumphant:  Bool
 
-    let maxVitality = 10
-    let victoryThreshold = 30
+    let maxIchor:         Int = 10
+    let triumphThreshold: Int = 30
 
-    init(archetype: SurvivorArchetype) {
-        self.archetype = archetype
-        self.vitality = 5 + archetype.vitaBonus
-        self.provenderStock = 2 + archetype.provenderBonus
-        self.aquiferStock = 2
-        self.armamentStock = max(0, 1 + archetype.armamentBonus)
-        self.wayfarerCount = archetype.wayfarerBonus
-        self.diurnalIndex = 1
-        self.aetherCondition = .lucent
-        self.forayMode = .placid
-        self.revenantTally = 0
-        self.wayfarerTally = archetype.wayfarerBonus
-        self.isExpired = false
-        self.isVictorious = false
+    init(archetype: WayfareBlueprint) {
+        vocationBlueprint = archetype
+        ichor             = 5 + archetype.ichorBonus
+        mannaCache        = 2 + archetype.mannaBonus
+        brineCache        = 2
+        falchionCache     = max(0, 1 + archetype.falchionBonus)
+        pilgrimCount      = archetype.pilgrimBonus
+        solsticeCount     = 1
+        etherClimate      = .pellucid
+        sortieRegime      = .quiescent
+        specterTally      = 0
+        pilgrimTally      = archetype.pilgrimBonus
+        isDesiccated      = false
+        isTriumphant      = false
     }
 
-    // Roll new weather for the day
-    func rollAetherCondition() {
-        let all = AetherCondition.allCases
-        aetherCondition = all.randomElement() ?? .lucent
+    // MARK: - Weather generation
+    func augurClimate() {
+        etherClimate = EtherealClimate.allCases.randomElement() ?? .pellucid
     }
 
-    // Compute current weights based on weather + foray mode
-    func computeGlyphWeights() -> [GlyphVariant: Int] {
-        var w = aetherCondition.adjustedWeights(base: VigilChronicle.baseWeights)
-        if forayMode == .perilous {
-            w[.revenant] = (w[.revenant] ?? 20) + 20
+    // MARK: - Weight computation
+    func computeRuneWeights() -> [RuneSpecimen: Int] {
+        var table = WeightTable(weights: VespersGrimoire.runeBaseWeights)
+        table = table.applying(patch: etherClimate.weightModifier.deltas)
+        if sortieRegime == .fraught {
+            table = table.applying(patch: [.specter: +20])
         }
-        return w
+        return table.rawWeights
     }
 
-    // Spin the reels and return results
-    func spinReels(count: Int = 3) -> [GlyphVariant] {
-        let weights = computeGlyphWeights()
-        var results: [GlyphVariant] = []
-        for _ in 0..<count {
-            results.append(weightedRandom(weights))
-        }
-        return results
+    // MARK: - Reel casting
+    func castLots(count: Int = 3) -> [RuneSpecimen] {
+        WeightTable(weights: computeRuneWeights()).sample(count: count)
     }
 
-    private func weightedRandom(_ weights: [GlyphVariant: Int]) -> GlyphVariant {
-        let total = weights.values.reduce(0, +)
-        var roll = Int.random(in: 0..<total)
-        for (glyph, w) in weights {
-            roll -= w
-            if roll < 0 { return glyph }
-        }
-        return .provender
-    }
+    // MARK: - Day settlement pipeline
+    func tallySolstice(specimens: [RuneSpecimen]) -> DiurnalReckoning {
+        var ledger = DiurnalReckoning()
 
-    // Settle a day's results; returns a log of events
-    func settleDay(glyphs: [GlyphVariant]) -> DaySettlementLedger {
-        var ledger = DaySettlementLedger()
-
-        // Count glyphs
-        var foodGained = 0, waterGained = 0, weaponGained = 0
-        var zombieCount = 0, survivorCount = 0
-        for g in glyphs {
-            switch g {
-            case .provender: foodGained += 1
-            case .aquifer:   waterGained += 1
-            case .armament:  weaponGained += 1
-            case .revenant:  zombieCount += 1
-            case .wayfarer:  survivorCount += 1
+        // 1. Tally raw counts from reel results
+        var rawManna = 0, rawBrine = 0, rawFalchion = 0, rawSpecter = 0, rawPilgrim = 0
+        specimens.forEach { s in
+            switch s {
+            case .manna:    rawManna    += 1
+            case .brine:    rawBrine    += 1
+            case .falchion: rawFalchion += 1
+            case .specter:  rawSpecter  += 1
+            case .pilgrim:  rawPilgrim  += 1
             }
         }
 
-        // Perilous doubles resources
-        if forayMode == .perilous {
-            foodGained *= 2
-            waterGained *= 2
-            weaponGained *= 2
-        }
+        // 2. Fraught mode doubles resource yields
+        let multiplier = sortieRegime == .fraught ? 2 : 1
+        let gainManna    = rawManna    * multiplier
+        let gainBrine    = rawBrine    * multiplier
+        let gainFalchion = rawFalchion * multiplier
 
-        // Apply resources
-        provenderStock += foodGained
-        aquiferStock   += waterGained
-        armamentStock  += weaponGained
-        ledger.provenderGained = foodGained
-        ledger.aquiferGained   = waterGained
-        ledger.armamentGained  = weaponGained
+        // 3. Credit resources
+        mannaCache    += gainManna
+        brineCache    += gainBrine
+        falchionCache += gainFalchion
+        ledger.mannaHarvested    = gainManna
+        ledger.brineHarvested    = gainBrine
+        ledger.falchionHarvested = gainFalchion
 
-        // Zombie combat
-        let weaponsUsed = min(armamentStock, zombieCount)
-        let undeflected = zombieCount - weaponsUsed
-        armamentStock -= weaponsUsed
-        revenantTally += zombieCount
-        ledger.revenantCount = zombieCount
-        ledger.vitaDamageFromRevenant = undeflected
-        if undeflected > 0 {
-            vitality -= undeflected
-        }
+        // 4. Resolve specter combat: weapons block zombies 1:1
+        let blocked          = min(falchionCache, rawSpecter)
+        let penetratingHits  = rawSpecter - blocked
+        falchionCache       -= blocked
+        specterTally        += rawSpecter
+        ledger.specterCount       = rawSpecter
+        ledger.ichorLostToSpecter = penetratingHits
+        if penetratingHits > 0 { ichor -= penetratingHits }
 
-        // Survivors
-        wayfarerCount += survivorCount
-        wayfarerTally += survivorCount
-        ledger.wayfarerGained = survivorCount
+        // 5. Pilgrims
+        pilgrimCount += rawPilgrim
+        pilgrimTally += rawPilgrim
+        ledger.pilgrimHarvested = rawPilgrim
 
-        // Daily consumption
-        let aquiferDrain = 1 + aetherCondition.aquiferDrainBonus
-        let provenderDrain = 1
+        // 6. Daily consumption: food (1/day) and water (1+bonus/day)
+        let waterDemand = 1 + etherClimate.brineDrainBonus
+        let foodDemand  = 1
 
-        if provenderStock >= provenderDrain {
-            provenderStock -= provenderDrain
+        if mannaCache >= foodDemand {
+            mannaCache -= foodDemand
         } else {
-            let deficit = provenderDrain - provenderStock
-            provenderStock = 0
-            vitality -= deficit
-            ledger.vitaDamageFromHunger = deficit
+            let deficit = foodDemand - mannaCache
+            mannaCache  = 0
+            ichor      -= deficit
+            ledger.ichorLostToHunger = deficit
         }
 
-        if aquiferStock >= aquiferDrain {
-            aquiferStock -= aquiferDrain
+        if brineCache >= waterDemand {
+            brineCache -= waterDemand
         } else {
-            let deficit = aquiferDrain - aquiferStock
-            aquiferStock = 0
-            vitality -= deficit
-            ledger.vitaDamageFromThirst = deficit
+            let deficit = waterDemand - brineCache
+            brineCache  = 0
+            ichor      -= deficit
+            ledger.ichorLostToThirst = deficit
         }
 
-        // Passive abilities
-        applyPassives(ledger: &ledger)
+        // 7. Character passive abilities
+        PassiveEffectEngine.apply(
+            caste:          vocationBlueprint.vocationCaste,
+            dayIndex:       solsticeCount,
+            specterTotal:   specterTally,
+            specterThisDay: ledger.specterCount,
+            pilgrimTotal:   pilgrimTally,
+            pilgrimThisDay: ledger.pilgrimHarvested,
+            maxHP:          maxIchor,
+            ichor:          &ichor,
+            falchionCache:  &falchionCache,
+            mannaCache:     &mannaCache,
+            brineCache:     &brineCache,
+            reckoning:      &ledger
+        )
 
-        // Clamp vitality
-        vitality = min(vitality, maxVitality)
-
-        // Check death / victory
-        if vitality <= 0 {
-            vitality = 0
-            isExpired = true
-        } else if diurnalIndex >= victoryThreshold {
-            isVictorious = true
+        // 8. Clamp HP and check termination
+        ichor = min(ichor, maxIchor)
+        if ichor <= 0 {
+            ichor = 0; isDesiccated = true
+        } else if solsticeCount >= triumphThreshold {
+            isTriumphant = true
         } else {
-            diurnalIndex += 1
+            solsticeCount += 1
         }
 
         return ledger
     }
 
-    private func applyPassives(ledger: inout DaySettlementLedger) {
-        switch archetype.kindling {
-        case .chirurgeon:
-            if diurnalIndex % 3 == 0 {
-                vitality = min(vitality + 1, maxVitality)
-                ledger.passiveHeal = 1
-            }
-        case .legionary:
-            let threshold = (revenantTally / 3)
-            let prev = ((revenantTally - ledger.revenantCount) / 3)
-            let bonus = threshold - prev
-            if bonus > 0 {
-                armamentStock += bonus
-                ledger.passiveArmamentBonus = bonus
-            }
-        case .artificer:
-            let threshold = (wayfarerTally / 3)
-            let prev = ((wayfarerTally - ledger.wayfarerGained) / 3)
-            let bonus = threshold - prev
-            if bonus > 0 {
-                provenderStock += bonus
-                aquiferStock   += bonus
-                armamentStock  += bonus
-                ledger.passiveResourceBonus = bonus
-            }
-        }
+    // Legacy private alias — kept so existing internal call sites compile
+    private func stochasticSample(_ weights: [RuneSpecimen: Int]) -> RuneSpecimen {
+        WeightTable(weights: weights).draw()
+    }
+
+    private func invokeLatencies(reckoning: inout DiurnalReckoning) {
+        PassiveEffectEngine.apply(
+            caste: vocationBlueprint.vocationCaste,
+            dayIndex: solsticeCount,
+            specterTotal: specterTally, specterThisDay: reckoning.specterCount,
+            pilgrimTotal: pilgrimTally, pilgrimThisDay: reckoning.pilgrimHarvested,
+            maxHP: maxIchor, ichor: &ichor, falchionCache: &falchionCache,
+            mannaCache: &mannaCache, brineCache: &brineCache, reckoning: &reckoning
+        )
     }
 }
 
-// MARK: - Day Settlement Ledger
+// MARK: - DiurnalReckoning (Day Settlement Report)
+struct DiurnalReckoning {
+    var mannaHarvested      = 0
+    var brineHarvested      = 0
+    var falchionHarvested   = 0
+    var pilgrimHarvested    = 0
+    var specterCount        = 0
+    var ichorLostToSpecter  = 0
+    var ichorLostToHunger   = 0
+    var ichorLostToThirst   = 0
+    var latentMend          = 0
+    var latentFalchionBonus = 0
+    var latentMannaBonus    = 0
 
-struct DaySettlementLedger {
-    var provenderGained = 0
-    var aquiferGained   = 0
-    var armamentGained  = 0
-    var wayfarerGained  = 0
-    var revenantCount   = 0
-    var vitaDamageFromRevenant = 0
-    var vitaDamageFromHunger   = 0
-    var vitaDamageFromThirst   = 0
-    var passiveHeal            = 0
-    var passiveArmamentBonus   = 0
-    var passiveResourceBonus   = 0
-
-    var summaryLines: [String] {
-        var lines: [String] = []
-        if provenderGained > 0 { lines.append("+\(provenderGained) Food") }
-        if aquiferGained   > 0 { lines.append("+\(aquiferGained) Water") }
-        if armamentGained  > 0 { lines.append("+\(armamentGained) Weapon") }
-        if wayfarerGained  > 0 { lines.append("+\(wayfarerGained) Survivor") }
-        if revenantCount   > 0 { lines.append("\(revenantCount) Zombie(s) encountered") }
-        if vitaDamageFromRevenant > 0 { lines.append("-\(vitaDamageFromRevenant) HP (zombie)") }
-        if vitaDamageFromHunger   > 0 { lines.append("-\(vitaDamageFromHunger) HP (hunger)") }
-        if vitaDamageFromThirst   > 0 { lines.append("-\(vitaDamageFromThirst) HP (thirst)") }
-        if passiveHeal            > 0 { lines.append("+\(passiveHeal) HP (passive)") }
-        if passiveArmamentBonus   > 0 { lines.append("+\(passiveArmamentBonus) Weapon (passive)") }
-        if passiveResourceBonus   > 0 { lines.append("+\(passiveResourceBonus) Resources (passive)") }
-        return lines
+    var compendiumLines: [String] {
+        [
+            mannaHarvested     > 0 ? "+\(mannaHarvested) Food"                      : nil,
+            brineHarvested     > 0 ? "+\(brineHarvested) Water"                     : nil,
+            falchionHarvested  > 0 ? "+\(falchionHarvested) Weapon"                 : nil,
+            pilgrimHarvested   > 0 ? "+\(pilgrimHarvested) Survivor"                : nil,
+            specterCount       > 0 ? "\(specterCount) Zombie(s) encountered"        : nil,
+            ichorLostToSpecter > 0 ? "-\(ichorLostToSpecter) HP (zombie)"          : nil,
+            ichorLostToHunger  > 0 ? "-\(ichorLostToHunger) HP (hunger)"           : nil,
+            ichorLostToThirst  > 0 ? "-\(ichorLostToThirst) HP (thirst)"           : nil,
+            latentMend         > 0 ? "+\(latentMend) HP (passive)"                  : nil,
+            latentFalchionBonus > 0 ? "+\(latentFalchionBonus) Weapon (passive)"   : nil,
+            latentMannaBonus   > 0 ? "+\(latentMannaBonus) Resources (passive)"     : nil
+        ].compactMap { $0 }
     }
+
+    var summaryLines: [String] { compendiumLines }
 }
+
+// MARK: - Backward-compat aliases
+typealias GlyphVariant = RuneSpecimen
+typealias ForayMode    = SortieRegime
+
+extension SortieRegime {
+    static var placid:   SortieRegime { .quiescent }
+    static var perilous: SortieRegime { .fraught   }
+}
+
+extension WayfareBlueprint {
+    var portraitAsset: String { effigyAsset }
+}
+
+extension VespersGrimoire {
+    var forayMode: SortieRegime {
+        get { sortieRegime }
+        set { sortieRegime = newValue }
+    }
+    func rollAetherCondition()                                      { augurClimate() }
+    func spinReels(count: Int) -> [RuneSpecimen]                    { castLots(count: count) }
+    func settleDay(glyphs: [RuneSpecimen]) -> DiurnalReckoning      { tallySolstice(specimens: glyphs) }
+    var isExpired:     Bool             { isDesiccated }
+    var isVictorious:  Bool             { isTriumphant }
+    var diurnalIndex:  Int              { solsticeCount }
+    var archetype:     WayfareBlueprint { vocationBlueprint }
+    var revenantTally: Int              { specterTally }
+    var wayfarerTally: Int              { pilgrimTally }
+    var vitality:      Int              { ichor }
+}
+
+typealias DaySettlementLedger = DiurnalReckoning
+typealias VigilChronicle      = VespersGrimoire

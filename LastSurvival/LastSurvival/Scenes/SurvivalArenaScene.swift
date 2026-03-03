@@ -1,445 +1,573 @@
-// SurvivalArenaScene.swift — Main gameplay scene
+// SurvivalArenaScene.swift — Main gameplay scene (refactored)
 
 import SpriteKit
 
+// MARK: - ArenaPhase: explicit game flow states
+private enum ArenaPhase {
+    case awaitingSpin
+    case spinning
+    case settling
+    case showingLedger
+    case gameOver
+}
+
+// MARK: - SurvivalArenaScene
 class SurvivalArenaScene: SKScene {
 
     private let chronicle: VigilChronicle
-    private var hudNode: ProvisionsManifestNode!
-    private var reelNodes: [ReelAxleNode] = []
-    private var spinBtn: ObsidianButtonNode!
-    private var forayToggle: ForayToggleNode!
-    private var ledgerPanel: LedgerPanelNode?
-    private var isSpinning = false
-    private var pendingGlyphs: [GlyphVariant] = []
+    private var hudPanel:    ProvisionsManifestNode!
+    private var reelColumns: [ReelAxleNode] = []
+    private var spinButton:  ObsidianButtonNode!
+    private var modeSwitch:  ForayToggleNode!
+    private var reportPanel: LedgerPanelNode?
+
+    private var currentPhase: ArenaPhase = .awaitingSpin
+    private var pendingResults: [GlyphVariant] = []
 
     init(size: CGSize, chronicle: VigilChronicle) {
         self.chronicle = chronicle
         super.init(size: size)
     }
 
-    required init?(coder aDecoder: NSCoder) { fatalError() }
+    required init?(coder aDecoder: NSCoder) { fatalError("init(coder:) not implemented") }
 
     override func didMove(to view: SKView) {
-        backgroundColor = PaletteForge.obsidian
+        backgroundColor = DesignToken.cosmicInk
         chronicle.rollAetherCondition()
-        buildUI()
+        assembleInterface()
     }
 
-    private func buildUI() {
-        let sc = size.adaptiveScale
+    // MARK: - Interface assembly
 
-        // Background
-        let bg = SKSpriteNode(imageNamed: "bg_main")
-        bg.size = size
-        bg.position = CGPoint(x: size.width/2, y: size.height/2)
-        bg.alpha = 0.30
-        bg.zPosition = -1
-        addChild(bg)
+    private func assembleInterface() {
+        let sc = size.calibration
+        mountSceneBackground(sc: sc)
+        mountHUD(sc: sc)
+        mountSlotMachine(sc: sc)
+        mountModeToggle(sc: sc)
+        mountSpinButton(sc: sc)
+        mountMenuButton(sc: sc)
+        mountPortrait(sc: sc)
+    }
 
-        // HUD — respect Dynamic Island / notch safe area
+    private func mountSceneBackground(sc: CGFloat) {
+        let wallpaper       = SKSpriteNode(imageNamed: "bg_main")
+        wallpaper.size      = size
+        wallpaper.position  = CGPoint(x: size.width / 2, y: size.height / 2)
+        wallpaper.alpha     = 0.14
+        wallpaper.zPosition = -1
+        addChild(wallpaper)
+
+        let tintOverlay       = SKShapeNode(rectOf: size)
+        tintOverlay.position  = CGPoint(x: size.width / 2, y: size.height / 2)
+        tintOverlay.fillColor = UIColor(red: 0.03, green: 0.02, blue: 0.14, alpha: 0.60)
+        tintOverlay.strokeColor = .clear
+        tintOverlay.zPosition = 0
+        addChild(tintOverlay)
+    }
+
+    private func mountHUD(sc: CGFloat) {
         let safeTop = view?.safeAreaInsets.top ?? 44
-        let hudH = 110 * sc
-        hudNode = ProvisionsManifestNode(sceneSize: size)
-        hudNode.position = CGPoint(x: size.width/2, y: size.height - safeTop - hudH / 2)
-        hudNode.zPosition = 5
-        addChild(hudNode)
-        hudNode.refresh(chronicle: chronicle)
-
-        // Slot machine frame
-        buildSlotMachine(sc: sc)
-
-        // Foray toggle
-        forayToggle = ForayToggleNode(sceneSize: size)
-        forayToggle.position = CGPoint(x: size.width/2, y: size.height * 0.28)
-        forayToggle.zPosition = 4
-        forayToggle.onToggle = { [weak self] mode in
-            self?.chronicle.forayMode = mode
-        }
-        addChild(forayToggle)
-
-        // Spin button
-        let btnW = 200 * sc
-        let btnH = 54 * sc
-        spinBtn = ObsidianButtonNode(
-            size: CGSize(width: btnW, height: btnH),
-            title: "SPIN",
-            fillColor: PaletteForge.cinderGold,
-            titleColor: PaletteForge.obsidian,
-            cornerRadius: 27 * sc
-        )
-        spinBtn.position = CGPoint(x: size.width/2, y: size.height * 0.16)
-        spinBtn.zPosition = 4
-        spinBtn.onTap = { [weak self] in self?.beginSpin() }
-        addChild(spinBtn)
-
-        // Character portrait (top right) — aligned with HUD centre
-        let portrait = SKSpriteNode(imageNamed: chronicle.archetype.portraitAsset)
-        let pSize = 44 * sc
-        portrait.size = CGSize(width: pSize, height: pSize)
-        let safeTopPortrait = view?.safeAreaInsets.top ?? 44
-        let hudH2 = 110 * sc
-        portrait.position = CGPoint(x: size.width - pSize / 2 - 8 * sc, y: size.height - safeTopPortrait - hudH2 / 2)
-        portrait.zPosition = 6
-        addChild(portrait)
-
-        // Menu button — below HUD, left-aligned
-        let menuBtnW: CGFloat = 70 * sc
-        let menuBtnH: CGFloat = 28 * sc
-        let menuBtn = ObsidianButtonNode(
-            size: CGSize(width: menuBtnW, height: menuBtnH),
-            title: "MENU",
-            fillColor: PaletteForge.slateGray,
-            titleColor: PaletteForge.ashWhite,
-            cornerRadius: 8 * sc
-        )
-        menuBtn.position = CGPoint(x: 14 * sc + menuBtnW / 2, y: size.height - safeTop - 20 * sc)
-        menuBtn.zPosition = 6
-        menuBtn.onTap = { [weak self] in self?.showAbandonConfirm() }
-        addChild(menuBtn)
+        let hudH    = 114 * sc
+        hudPanel    = ProvisionsManifestNode(sceneSize: size)
+        hudPanel.position  = CGPoint(x: size.width / 2, y: size.height - safeTop - hudH / 2)
+        hudPanel.zPosition = 5
+        addChild(hudPanel)
+        hudPanel.refresh(chronicle: chronicle)
     }
 
-    private func buildSlotMachine(sc: CGFloat) {
-        let reelCount = 3
-        let gap: CGFloat = 10 * sc
-        let sidePad: CGFloat = 20 * sc
-        let reelW = (size.width - sidePad * 2 - gap * CGFloat(reelCount - 1)) / CGFloat(reelCount)
-        let reelH = reelW * 1.38
-        let totalW = CGFloat(reelCount) * reelW + gap * CGFloat(reelCount - 1)
-        let startX = (size.width - totalW) / 2 + reelW / 2
-        let reelY = size.height * 0.52
+    private func mountSlotMachine(sc: CGFloat) {
+        let reelCount  = 3
+        let columnGap: CGFloat = 10 * sc
+        let sidePadding: CGFloat = 18 * sc
+        let columnW = (size.width - sidePadding * 2 - columnGap * CGFloat(reelCount - 1)) / CGFloat(reelCount)
+        let columnH = columnW * 1.38
+        let machineSpan = CGFloat(reelCount) * columnW + columnGap * CGFloat(reelCount - 1)
+        let firstColumnX = (size.width - machineSpan) / 2 + columnW / 2
+        let machineY = size.height * 0.52
 
-        // Machine frame
-        let frameW = totalW + 32 * sc
-        let frameH = reelH + 40 * sc
-        let machineFrame = PaletteForge.makeRoundedPanel(
-            size: CGSize(width: frameW, height: frameH),
-            cornerRadius: 18 * sc,
-            fillColor: UIColor(red: 0.07, green: 0.08, blue: 0.12, alpha: 0.95),
-            strokeColor: PaletteForge.cinderGold,
-            lineWidth: 2.5
+        // Outer frame panel — cerulean border
+        let frameW = machineSpan + 30 * sc
+        let frameH = columnH  + 38 * sc
+        let machineFrame = GeometryForge.panelNode(
+            size:        CGSize(width: frameW, height: frameH),
+            cutDepth:    14,
+            fill:        UIColor(red: 0.04, green: 0.02, blue: 0.14, alpha: 0.97),
+            stroke:      DesignToken.ceruleanVolt,
+            strokeWidth: 3
         )
-        machineFrame.position = CGPoint(x: size.width/2, y: reelY)
+        machineFrame.glowWidth = 3
+        machineFrame.position  = CGPoint(x: size.width / 2, y: machineY)
         machineFrame.zPosition = 2
         addChild(machineFrame)
 
-        // Glow line across center
-        let glowLine = SKShapeNode()
-        let glowPath = CGMutablePath()
-        glowPath.move(to: CGPoint(x: -frameW/2 + 10 * sc, y: 0))
-        glowPath.addLine(to: CGPoint(x: frameW/2 - 10 * sc, y: 0))
-        glowLine.path = glowPath
-        glowLine.strokeColor = PaletteForge.cinderGold.withAlphaComponent(0.25)
-        glowLine.lineWidth = 2
-        glowLine.zPosition = 3
-        machineFrame.addChild(glowLine)
+        // Neon-pink corner brackets on frame
+        GeometryForge.attachCornerBrackets(
+            to:        machineFrame,
+            covering:  CGSize(width: frameW, height: frameH),
+            armLength: 16,
+            tint:      DesignToken.radiantCrimson,
+            thickness: 2
+        )
 
-        // Reels
-        reelNodes.removeAll()
-        for i in 0..<reelCount {
-            let reel = ReelAxleNode(size: CGSize(width: reelW, height: reelH))
-            reel.position = CGPoint(x: startX + CGFloat(i) * (reelW + gap), y: reelY)
-            reel.zPosition = 3
-            addChild(reel)
-            reelNodes.append(reel)
+        // Horizontal payline across center
+        let paylinePath = CGMutablePath()
+        paylinePath.move(to:    CGPoint(x: -frameW / 2 + 8 * sc, y: 0))
+        paylinePath.addLine(to: CGPoint(x:  frameW / 2 - 8 * sc, y: 0))
+        let paylineShape = SKShapeNode(path: paylinePath)
+        paylineShape.strokeColor = DesignToken.radiantCrimson.withAlphaComponent(0.50)
+        paylineShape.lineWidth   = 2
+        paylineShape.zPosition   = 3
+        machineFrame.addChild(paylineShape)
+
+        // Reel columns
+        reelColumns.removeAll()
+        (0..<reelCount).forEach { columnIndex in
+            let column      = ReelAxleNode(size: CGSize(width: columnW, height: columnH))
+            column.position = CGPoint(x: firstColumnX + CGFloat(columnIndex) * (columnW + columnGap), y: machineY)
+            column.zPosition = 3
+            addChild(column)
+            reelColumns.append(column)
         }
     }
 
-    // MARK: - Spin Logic
+    private func mountModeToggle(sc: CGFloat) {
+        modeSwitch          = ForayToggleNode(sceneSize: size)
+        modeSwitch.position = CGPoint(x: size.width / 2, y: size.height * 0.28)
+        modeSwitch.zPosition = 4
+        modeSwitch.onToggle  = { [weak self] mode in self?.chronicle.forayMode = mode }
+        addChild(modeSwitch)
+    }
 
-    private func beginSpin() {
-        guard !isSpinning else { return }
-        isSpinning = true
-        spinBtn.setEnabled(false)
-        forayToggle.setEnabled(false)
+    private func mountSpinButton(sc: CGFloat) {
+        spinButton = ObsidianButtonNode(
+            size:        CGSize(width: 210 * sc, height: 56 * sc),
+            title:       "SPIN",
+            fillColor:   DesignToken.radiantCrimson,
+            titleColor:  DesignToken.frostSheen,
+            cornerRadius: 28 * sc
+        )
+        spinButton.position  = CGPoint(x: size.width / 2, y: size.height * 0.16)
+        spinButton.zPosition = 4
+        spinButton.onTap     = { [weak self] in self?.executeSpinPhase() }
+        addChild(spinButton)
+    }
 
-        let glyphs = chronicle.spinReels(count: reelNodes.count)
-        pendingGlyphs = glyphs
+    private func mountMenuButton(sc: CGFloat) {
+        let safeTop = view?.safeAreaInsets.top ?? 44
+        let menuBtn = ObsidianButtonNode(
+            size:        CGSize(width: 74 * sc, height: 30 * sc),
+            title:       "MENU",
+            fillColor:   DesignToken.violetShadow,
+            titleColor:  DesignToken.frostSheen,
+            cornerRadius: 8 * sc
+        )
+        menuBtn.position  = CGPoint(x: 14 * sc + 37 * sc, y: size.height - safeTop - 20 * sc)
+        menuBtn.zPosition = 6
+        menuBtn.onTap     = { [weak self] in self?.presentAbandonDialog() }
+        addChild(menuBtn)
+    }
 
-        var completedCount = 0
-        for (i, reel) in reelNodes.enumerated() {
-            reel.spinTo(glyph: glyphs[i], delay: Double(i) * 0.18) { [weak self] in
-                completedCount += 1
-                if completedCount == self?.reelNodes.count {
-                    self?.onAllReelsStopped()
-                }
+    private func mountPortrait(sc: CGFloat) {
+        let safeTop  = view?.safeAreaInsets.top ?? 44
+        let hudH     = 114 * sc
+        let iconSize = 44 * sc
+        let portrait      = SKSpriteNode(imageNamed: chronicle.archetype.portraitAsset)
+        portrait.size     = CGSize(width: iconSize, height: iconSize)
+        portrait.position = CGPoint(x: size.width - iconSize / 2 - 8 * sc,
+                                    y: size.height - safeTop - hudH / 2)
+        portrait.zPosition = 6
+        addChild(portrait)
+    }
+
+    // MARK: - Game flow phases
+
+    private func executeSpinPhase() {
+        guard currentPhase == .awaitingSpin else { return }
+        advancePhase(to: .spinning)
+
+        spinButton.setEnabled(false)
+        modeSwitch.setEnabled(false)
+
+        // Determine outcomes from the chronicle
+        let outcomes = chronicle.spinReels(count: reelColumns.count)
+        pendingResults = outcomes
+
+        // Launch all reels with staggered delays
+        var finishedCount = 0
+        reelColumns.enumerated().forEach { index, reel in
+            reel.spinTo(glyph: outcomes[index], delay: Double(index) * 0.18) { [weak self] in
+                finishedCount += 1
+                guard finishedCount == self?.reelColumns.count else { return }
+                self?.processOutcomePhase()
             }
         }
     }
 
-    private func onAllReelsStopped() {
-        // Flash result glyphs
-        for reel in reelNodes {
-            reel.run(SKAction.sequence([
-                SKAction.scale(to: 1.06, duration: 0.1),
-                SKAction.scale(to: 1.0, duration: 0.1)
+    private func processOutcomePhase() {
+        advancePhase(to: .settling)
+
+        // Brief bounce on all reels to signal completion
+        reelColumns.forEach { column in
+            column.run(SKAction.sequence([
+                SKAction.scale(to: 1.06, duration: 0.09),
+                SKAction.scale(to: 1.00, duration: 0.09)
             ]))
         }
 
-        // Settle after brief pause
+        // Short delay before settling
         run(SKAction.wait(forDuration: 0.5)) { [weak self] in
-            self?.settleDay()
+            guard let self else { return }
+            let dailyLedger = self.chronicle.settleDay(glyphs: self.pendingResults)
+            self.hudPanel.refresh(chronicle: self.chronicle)
+            self.presentReportPhase(ledger: dailyLedger)
         }
     }
 
-    private func settleDay() {
-        let ledger = chronicle.settleDay(glyphs: pendingGlyphs)
-        hudNode.refresh(chronicle: chronicle)
+    private func presentReportPhase(ledger: DaySettlementLedger) {
+        advancePhase(to: .showingLedger)
+        reportPanel?.removeFromParent()
 
-        showLedger(ledger: ledger)
-    }
-
-    private func showLedger(ledger: DaySettlementLedger) {
-        let sc = size.adaptiveScale
-        ledgerPanel?.removeFromParent()
-
-        let panel = LedgerPanelNode(ledger: ledger, sceneSize: size)
-        panel.position = CGPoint(x: size.width/2, y: size.height * 0.42)
-        panel.zPosition = 10
-        panel.onDismiss = { [weak self] in
-            self?.ledgerPanel?.removeFromParent()
-            self?.ledgerPanel = nil
-            self?.afterLedger()
+        let report       = LedgerPanelNode(ledger: ledger, sceneSize: size)
+        report.position  = CGPoint(x: size.width / 2, y: size.height * 0.42)
+        report.zPosition = 10
+        report.onDismiss = { [weak self] in
+            self?.reportPanel?.removeFromParent()
+            self?.reportPanel = nil
+            self?.resolveNextCyclePhase()
         }
-        addChild(panel)
-        ledgerPanel = panel
-        _ = sc
+        addChild(report)
+        reportPanel = report
     }
 
-    private func afterLedger() {
+    private func resolveNextCyclePhase() {
         if chronicle.isExpired {
-            goToEpitaph(victory: false)
+            advancePhase(to: .gameOver)
+            navigateToEpitaph(victory: false)
         } else if chronicle.isVictorious {
-            goToEpitaph(victory: true)
+            advancePhase(to: .gameOver)
+            navigateToEpitaph(victory: true)
         } else {
-            // New day: roll weather
+            // New day: roll weather, refresh HUD, re-enable controls
             chronicle.rollAetherCondition()
-            hudNode.refresh(chronicle: chronicle)
-            isSpinning = false
-            spinBtn.setEnabled(true)
-            forayToggle.setEnabled(true)
+            hudPanel.refresh(chronicle: chronicle)
+            advancePhase(to: .awaitingSpin)
+            spinButton.setEnabled(true)
+            modeSwitch.setEnabled(true)
         }
     }
 
-    private func goToEpitaph(victory: Bool) {
-        let scene = EpitaphScene(size: size, chronicle: chronicle, victory: victory)
-        scene.scaleMode = scaleMode
-        let trans = SKTransition.fade(withDuration: 0.6)
-        view?.presentScene(scene, transition: trans)
+    private func advancePhase(to phase: ArenaPhase) {
+        currentPhase = phase
     }
 
-    // MARK: - Menu / Abandon
+    // MARK: - Navigation
 
-    private func showAbandonConfirm() {
-        // Disable controls while overlay is shown
-        spinBtn.setEnabled(false)
-        forayToggle.setEnabled(false)
+    private func navigateToEpitaph(victory: Bool) {
+        let endpoint = EpitaphScene(size: size, chronicle: chronicle, victory: victory)
+        endpoint.scaleMode = scaleMode
+        view?.presentScene(endpoint, transition: SKTransition.fade(withDuration: 0.6))
+    }
 
-        let sc = size.adaptiveScale
-        let overlay = SKNode()
-        overlay.name = "abandonOverlay"
-        overlay.zPosition = 30
+    // MARK: - Abandon dialog
 
-        // Dimmer (blocks touches on underlying buttons via high zPosition)
-        let dimmer = SKSpriteNode(color: UIColor(white: 0, alpha: 0.62), size: size)
-        dimmer.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        dimmer.isUserInteractionEnabled = true
-        overlay.addChild(dimmer)
+    private func presentAbandonDialog() {
+        spinButton.setEnabled(false)
+        modeSwitch.setEnabled(false)
+        AbandonFlowController.show(in: self, dayIndex: chronicle.diurnalIndex, scale: size.calibration,
+            onAbort:  { [weak self] in self?.exitToMenu() },
+            onCancel: { [weak self] in
+                guard self?.currentPhase == .awaitingSpin else { return }
+                self?.spinButton.setEnabled(true)
+                self?.modeSwitch.setEnabled(true)
+            }
+        )
+    }
+
+    private func exitToMenu() {
+        let menu = TitleVaultScene(size: size)
+        menu.scaleMode = scaleMode
+        view?.presentScene(menu, transition: SKTransition.fade(withDuration: 0.4))
+    }
+
+    // Legacy method aliases
+    private func beginSpin()                                   { executeSpinPhase() }
+    private func onAllReelsStopped()                           { processOutcomePhase() }
+    private func settleDay()                                   { processOutcomePhase() }
+    private func showLedger(ledger: DaySettlementLedger)       { presentReportPhase(ledger: ledger) }
+    private func afterLedger()                                 { resolveNextCyclePhase() }
+    private func goToEpitaph(victory: Bool)                    { navigateToEpitaph(victory: victory) }
+    private func showAbandonConfirm()                          { presentAbandonDialog() }
+    private func abandonRun()                                  { exitToMenu() }
+}
+
+// MARK: - AbandonFlowController: manages the exit-confirmation overlay
+private enum AbandonFlowController {
+    static func show(
+        in scene: SKScene,
+        dayIndex: Int,
+        scale sc: CGFloat,
+        onAbort:  @escaping () -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        let overlayTag = "abandonFlow"
+        guard scene.childNode(withName: overlayTag) == nil else { return }
+
+        let container       = SKNode()
+        container.name      = overlayTag
+        container.zPosition = 30
+
+        // Dim backdrop
+        let dimRect = SKSpriteNode(
+            color: UIColor(red: 0, green: 0, blue: 0.05, alpha: 0.72),
+            size:  scene.size
+        )
+        dimRect.position                = CGPoint(x: scene.size.width / 2, y: scene.size.height / 2)
+        dimRect.isUserInteractionEnabled = true
+        container.addChild(dimRect)
 
         // Dialog panel
-        let panelW: CGFloat = 270 * sc
-        let panelH: CGFloat = 148 * sc
-        let panel = PaletteForge.makeRoundedPanel(
-            size: CGSize(width: panelW, height: panelH),
-            cornerRadius: 16 * sc,
-            fillColor: UIColor(red: 0.07, green: 0.07, blue: 0.12, alpha: 0.98),
-            strokeColor: PaletteForge.cinderGold,
-            lineWidth: 2
+        let dialogW: CGFloat = 280 * sc
+        let dialogH: CGFloat = 152 * sc
+        let dialog = GeometryForge.panelNode(
+            size:        CGSize(width: dialogW, height: dialogH),
+            cutDepth:    12,
+            fill:        UIColor(red: 0.06, green: 0.03, blue: 0.18, alpha: 0.98),
+            stroke:      DesignToken.radiantCrimson,
+            strokeWidth: 2.5
         )
-        panel.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        overlay.addChild(panel)
+        dialog.glowWidth = 2
+        dialog.position  = CGPoint(x: scene.size.width / 2, y: scene.size.height / 2)
+        container.addChild(dialog)
 
-        let headLbl = PaletteForge.makeLabel(text: "ABANDON RUN?", fontSize: 16 * sc, color: PaletteForge.cinderGold, bold: true)
-        headLbl.position = CGPoint(x: size.width / 2, y: size.height / 2 + panelH * 0.22)
-        overlay.addChild(headLbl)
-
-        let subLbl = PaletteForge.makeLabel(
-            text: "Day \(chronicle.diurnalIndex) progress will be lost.",
-            fontSize: 11 * sc,
-            color: PaletteForge.ashWhite.withAlphaComponent(0.75)
+        // Title label
+        let titleNode = TypographyScale.labelNode(
+            text:   "ABORT RUN?",
+            size:   17 * sc,
+            tint:   DesignToken.radiantCrimson,
+            weight: .headline
         )
-        subLbl.position = CGPoint(x: size.width / 2, y: size.height / 2 + panelH * 0.01)
-        overlay.addChild(subLbl)
+        titleNode.position = CGPoint(x: scene.size.width / 2, y: scene.size.height / 2 + dialogH * 0.22)
+        container.addChild(titleNode)
 
-        let btnW: CGFloat = 108 * sc
-        let btnH: CGFloat = 40 * sc
-        let btnY = size.height / 2 - panelH * 0.28
+        // Sub-message
+        let subNode = TypographyScale.labelNode(
+            text: "Day \(dayIndex) progress will be lost.",
+            size: 11 * sc,
+            tint: DesignToken.ashNebula
+        )
+        subNode.position = CGPoint(x: scene.size.width / 2, y: scene.size.height / 2 + dialogH * 0.02)
+        container.addChild(subNode)
 
-        let abandonBtn = ObsidianButtonNode(
-            size: CGSize(width: btnW, height: btnH),
-            title: "ABANDON",
-            fillColor: PaletteForge.bloodRed,
-            titleColor: PaletteForge.ashWhite,
+        // Action buttons
+        let buttonW: CGFloat = 112 * sc
+        let buttonH: CGFloat = 42 * sc
+        let buttonRowY = scene.size.height / 2 - dialogH * 0.28
+
+        let abortBtn = ObsidianButtonNode(
+            size:        CGSize(width: buttonW, height: buttonH),
+            title:       "ABORT",
+            fillColor:   DesignToken.vermillionAlert,
+            titleColor:  DesignToken.frostSheen,
             cornerRadius: 10 * sc
         )
-        abandonBtn.position = CGPoint(x: size.width / 2 - btnW / 2 - 6 * sc, y: btnY)
-        abandonBtn.zPosition = 31
-        abandonBtn.onTap = { [weak self] in self?.abandonRun() }
-        overlay.addChild(abandonBtn)
+        abortBtn.position  = CGPoint(x: scene.size.width / 2 - buttonW / 2 - 6 * sc, y: buttonRowY)
+        abortBtn.zPosition = 31
+        abortBtn.onTap     = { onAbort() }
+        container.addChild(abortBtn)
 
-        let cancelBtn = ObsidianButtonNode(
-            size: CGSize(width: btnW, height: btnH),
-            title: "CANCEL",
-            fillColor: PaletteForge.slateGray,
-            titleColor: PaletteForge.ashWhite,
+        let keepBtn = ObsidianButtonNode(
+            size:        CGSize(width: buttonW, height: buttonH),
+            title:       "CANCEL",
+            fillColor:   DesignToken.violetShadow,
+            titleColor:  DesignToken.frostSheen,
             cornerRadius: 10 * sc
         )
-        cancelBtn.position = CGPoint(x: size.width / 2 + btnW / 2 + 6 * sc, y: btnY)
-        cancelBtn.zPosition = 31
-        cancelBtn.onTap = { [weak self] in
-            self?.childNode(withName: "abandonOverlay")?.removeFromParent()
-            if !(self?.isSpinning ?? true) {
-                self?.spinBtn.setEnabled(true)
-                self?.forayToggle.setEnabled(true)
-            }
+        keepBtn.position  = CGPoint(x: scene.size.width / 2 + buttonW / 2 + 6 * sc, y: buttonRowY)
+        keepBtn.zPosition = 31
+        keepBtn.onTap     = {
+            scene.childNode(withName: overlayTag)?.removeFromParent()
+            onCancel()
         }
-        overlay.addChild(cancelBtn)
+        container.addChild(keepBtn)
 
-        // Entrance
-        overlay.setScale(0.92)
-        overlay.alpha = 0
-        addChild(overlay)
-        overlay.run(SKAction.group([
+        // Entrance animation
+        container.setScale(0.90)
+        container.alpha = 0
+        scene.addChild(container)
+        container.run(SKAction.group([
             SKAction.fadeIn(withDuration: 0.18),
             SKAction.scale(to: 1.0, duration: 0.18)
         ]))
     }
-
-    private func abandonRun() {
-        let scene = TitleVaultScene(size: size)
-        scene.scaleMode = scaleMode
-        view?.presentScene(scene, transition: SKTransition.fade(withDuration: 0.4))
-    }
 }
 
-// MARK: - ForayToggleNode
-
+// MARK: - ForayToggleNode: two-segment mode selector
 class ForayToggleNode: SKNode {
 
     var onToggle: ((ForayMode) -> Void)?
-    private var currentMode: ForayMode = .placid
-    private let placidBtn: ObsidianButtonNode
-    private let perilousBtn: ObsidianButtonNode
+    private var activeMode: ForayMode = .placid
+    private let safeButton:   ObsidianButtonNode
+    private let dangerButton: ObsidianButtonNode
 
     init(sceneSize: CGSize) {
-        let sc = sceneSize.adaptiveScale
-        let btnW = (sceneSize.width - 56 * sc) / 2
-        let btnH = 40 * sc
+        let sc        = sceneSize.calibration
+        let eachW     = (sceneSize.width - 56 * sc) / 2
+        let eachH     = 42 * sc
 
-        placidBtn = ObsidianButtonNode(
-            size: CGSize(width: btnW, height: btnH),
-            title: "SAFE SEARCH",
-            fillColor: PaletteForge.jadeTeal,
-            titleColor: PaletteForge.obsidian,
+        safeButton = ObsidianButtonNode(
+            size:        CGSize(width: eachW, height: eachH),
+            title:       "SAFE SEARCH",
+            fillColor:   DesignToken.phosphorLime,
+            titleColor:  DesignToken.cosmicInk,
             cornerRadius: 10 * sc
         )
-        perilousBtn = ObsidianButtonNode(
-            size: CGSize(width: btnW, height: btnH),
-            title: "DANGER EXPLORE",
-            fillColor: PaletteForge.slateGray,
-            titleColor: PaletteForge.ashWhite,
+        dangerButton = ObsidianButtonNode(
+            size:        CGSize(width: eachW, height: eachH),
+            title:       "DANGER EXPLORE",
+            fillColor:   DesignToken.violetShadow,
+            titleColor:  DesignToken.frostSheen,
             cornerRadius: 10 * sc
         )
 
         super.init()
 
-        let spacing = btnW / 2 + 6 * sc
-        placidBtn.position = CGPoint(x: -spacing, y: 0)
-        perilousBtn.position = CGPoint(x: spacing, y: 0)
-        addChild(placidBtn)
-        addChild(perilousBtn)
+        let offset = eachW / 2 + 6 * sc
+        safeButton.position   = CGPoint(x: -offset, y: 0)
+        dangerButton.position = CGPoint(x:  offset, y: 0)
+        addChild(safeButton)
+        addChild(dangerButton)
 
-        placidBtn.onTap = { [weak self] in self?.select(.placid) }
-        perilousBtn.onTap = { [weak self] in self?.select(.perilous) }
+        safeButton.onTap   = { [weak self] in self?.applyMode(.placid)   }
+        dangerButton.onTap = { [weak self] in self?.applyMode(.perilous) }
     }
 
-    required init?(coder aDecoder: NSCoder) { fatalError() }
+    required init?(coder aDecoder: NSCoder) { fatalError("init(coder:) not implemented") }
 
-    private func select(_ mode: ForayMode) {
-        currentMode = mode
-        placidBtn.alpha = mode == .placid ? 1.0 : 0.5
-        perilousBtn.alpha = mode == .perilous ? 1.0 : 0.5
+    private func applyMode(_ mode: ForayMode) {
+        activeMode = mode
+        safeButton.alpha   = mode == .placid   ? 1.0 : 0.45
+        dangerButton.alpha = mode == .perilous ? 1.0 : 0.45
         onToggle?(mode)
     }
 
     func setEnabled(_ enabled: Bool) {
-        placidBtn.setEnabled(enabled)
-        perilousBtn.setEnabled(enabled)
+        safeButton.setEnabled(enabled)
+        dangerButton.setEnabled(enabled)
     }
+
+    // Legacy alias
+    private func select(_ mode: ForayMode) { applyMode(mode) }
 }
 
-// MARK: - LedgerPanelNode
-
+// MARK: - LedgerPanelNode: day report summary overlay
 class LedgerPanelNode: SKNode {
 
     var onDismiss: (() -> Void)?
 
     init(ledger: DaySettlementLedger, sceneSize: CGSize) {
         super.init()
-        let sc = sceneSize.adaptiveScale
-        let lines = ledger.summaryLines
-        let panelW = sceneSize.width * 0.78
-        let lineH = 18 * sc
-        let panelH = max(160 * sc, CGFloat(lines.count + 2) * lineH + 60 * sc)
-
-        let bg = PaletteForge.makeRoundedPanel(
-            size: CGSize(width: panelW, height: panelH),
-            cornerRadius: 16 * sc,
-            fillColor: UIColor(red: 0.07, green: 0.08, blue: 0.12, alpha: 0.97),
-            strokeColor: PaletteForge.cinderGold,
-            lineWidth: 2
-        )
-        addChild(bg)
-
-        let titleLbl = PaletteForge.makeLabel(text: "DAY REPORT", fontSize: 14 * sc, color: PaletteForge.cinderGold, bold: true)
-        titleLbl.position = CGPoint(x: 0, y: panelH/2 - 22 * sc)
-        addChild(titleLbl)
-
-        let startY = panelH/2 - 44 * sc
-        for (i, line) in lines.enumerated() {
-            let lbl = PaletteForge.makeLabel(text: line, fontSize: 12 * sc, color: PaletteForge.ashWhite)
-            lbl.position = CGPoint(x: 0, y: startY - CGFloat(i) * lineH)
-            addChild(lbl)
-        }
-
-        if lines.isEmpty {
-            let emptyLbl = PaletteForge.makeLabel(text: "Nothing happened.", fontSize: 12 * sc, color: PaletteForge.ashWhite.withAlphaComponent(0.6))
-            emptyLbl.position = CGPoint(x: 0, y: 0)
-            addChild(emptyLbl)
-        }
-
-        let okBtn = ObsidianButtonNode(
-            size: CGSize(width: 120 * sc, height: 38 * sc),
-            title: "NEXT DAY",
-            fillColor: PaletteForge.cinderGold,
-            titleColor: PaletteForge.obsidian,
-            cornerRadius: 10 * sc
-        )
-        okBtn.position = CGPoint(x: 0, y: -(panelH/2 - 26 * sc))
-        okBtn.zPosition = 1
-        okBtn.onTap = { [weak self] in
-            self?.run(SKAction.group([
-                SKAction.fadeOut(withDuration: 0.2),
-                SKAction.scale(to: 0.85, duration: 0.2)
-            ])) { self?.onDismiss?() }
-        }
-        addChild(okBtn)
-
-        // Entrance
-        setScale(0.85)
-        alpha = 0
-        run(SKAction.group([SKAction.fadeIn(withDuration: 0.22), SKAction.scale(to: 1.0, duration: 0.22)]))
+        buildReport(ledger: ledger, sceneSize: sceneSize)
     }
 
-    required init?(coder aDecoder: NSCoder) { fatalError() }
+    required init?(coder aDecoder: NSCoder) { fatalError("init(coder:) not implemented") }
+
+    private func buildReport(ledger: DaySettlementLedger, sceneSize: CGSize) {
+        let sc      = sceneSize.calibration
+        let lines   = ledger.summaryLines
+        let panelW  = sceneSize.width * 0.80
+        let rowH    = 18 * sc
+        let minH    = 168 * sc
+        let panelH  = max(minH, CGFloat(lines.count + 2) * rowH + 64 * sc)
+        let panelSz = CGSize(width: panelW, height: panelH)
+
+        // Background panel — cerulean border
+        let panelBg = GeometryForge.panelNode(
+            size:        panelSz,
+            cutDepth:    12,
+            fill:        UIColor(red: 0.05, green: 0.03, blue: 0.16, alpha: 0.97),
+            stroke:      DesignToken.ceruleanVolt,
+            strokeWidth: 2.5
+        )
+        panelBg.glowWidth = 2
+        addChild(panelBg)
+
+        // Corner brackets in crimson
+        GeometryForge.attachCornerBrackets(
+            to:        panelBg,
+            covering:  panelSz,
+            armLength: 12,
+            tint:      DesignToken.radiantCrimson,
+            thickness: 1.5
+        )
+
+        // "DAY REPORT" heading
+        let heading = TypographyScale.labelNode(
+            text:   "DAY REPORT",
+            size:   15 * sc,
+            tint:   DesignToken.radiantCrimson,
+            weight: .headline
+        )
+        heading.position = CGPoint(x: 0, y: panelH / 2 - 22 * sc)
+        addChild(heading)
+
+        // Divider below heading
+        let divider = GeometryForge.dividerLine(span: panelW * 0.8, tint: DesignToken.radiantCrimson, opacity: 0.35)
+        divider.position = CGPoint(x: 0, y: panelH / 2 - 36 * sc)
+        addChild(divider)
+
+        // Summary lines or placeholder
+        if lines.isEmpty {
+            let emptyMsg = TypographyScale.labelNode(
+                text: "Nothing happened.",
+                size: 12 * sc,
+                tint: DesignToken.ashNebula
+            )
+            emptyMsg.position = .zero
+            addChild(emptyMsg)
+        } else {
+            let topLineY = panelH / 2 - 50 * sc
+            lines.enumerated().forEach { index, lineText in
+                let lineLabel = TypographyScale.labelNode(
+                    text: lineText,
+                    size: 12 * sc,
+                    tint: DesignToken.frostSheen
+                )
+                lineLabel.position = CGPoint(x: 0, y: topLineY - CGFloat(index) * rowH)
+                addChild(lineLabel)
+            }
+        }
+
+        // NEXT DAY button
+        let advanceBtn = ObsidianButtonNode(
+            size:        CGSize(width: 130 * sc, height: 40 * sc),
+            title:       "NEXT DAY",
+            fillColor:   DesignToken.phosphorLime,
+            titleColor:  DesignToken.cosmicInk,
+            cornerRadius: 10 * sc
+        )
+        advanceBtn.position  = CGPoint(x: 0, y: -(panelH / 2 - 26 * sc))
+        advanceBtn.zPosition = 1
+        advanceBtn.onTap     = { [weak self] in
+            self?.run(SKAction.group([
+                SKAction.fadeOut(withDuration: 0.2),
+                SKAction.scale(to: 0.88, duration: 0.2)
+            ])) { self?.onDismiss?() }
+        }
+        addChild(advanceBtn)
+
+        // Entrance animation
+        setScale(0.82)
+        alpha = 0
+        run(AnimationBlueprint.modalEntrance(targetScale: 1.0, duration: 0.22))
+    }
+}
+
+// MARK: - Backward-compat alias
+typealias OublietteSpinScene = SurvivalArenaScene
+
+extension SurvivalArenaScene {
+    convenience init(size: CGSize, grimoire: VespersGrimoire) {
+        self.init(size: size, chronicle: grimoire)
+    }
 }

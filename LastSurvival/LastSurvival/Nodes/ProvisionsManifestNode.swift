@@ -1,142 +1,278 @@
-// ProvisionsManifestNode.swift — HUD resource panel
+// ProvisionsManifestNode.swift — TabulaVerdure: HUD resource panel (refactored)
 
 import SpriteKit
 
-class ProvisionsManifestNode: SKNode {
+// MARK: - HUDLayout: relative position offsets for all HUD sub-elements
+private struct HUDLayout {
+    let scale: CGFloat
+    let totalWidth: CGFloat
+    let panelHeight: CGFloat
 
-    private let sc: CGFloat
-    private var vitaBar: SKShapeNode!
-    private var vitaFill: SKShapeNode!
-    private var vitaLabel: SKLabelNode!
-    private var dayLabel: SKLabelNode!
-    private var weatherIcon: SKSpriteNode!
+    // Y positions as fractions of panel height
+    var topRowY:      CGFloat { panelHeight *  0.36 }
+    var healthBarY:   CGFloat { panelHeight *  0.06 }
+    var resourceRowY: CGFloat { panelHeight * -0.30 }
+
+    // Health bar dimensions
+    var barSpan:      CGFloat { totalWidth * 0.82 }
+    var segmentGap:   CGFloat { 3 * scale }
+    var segmentHeight: CGFloat { 11 * scale }
+
+    // Resource column spacing
+    var colSpacing: CGFloat { totalWidth * 0.22 }
+}
+
+// MARK: - HealthBarRenderer: manages HP segment nodes and color logic
+private class HealthBarRenderer {
+    private var segments: [SKShapeNode] = []
+    private var hpLabel: SKLabelNode!
+    private let totalSegments: Int = 10
+
+    // Populate segments into the given parent node using layout metrics
+    func buildSegments(into parent: SKNode, layout: HUDLayout) {
+        segments.removeAll()
+
+        let segW = (layout.barSpan - layout.segmentGap * CGFloat(totalSegments - 1)) / CGFloat(totalSegments)
+        let segH = layout.segmentHeight
+
+        (0..<totalSegments).forEach { index in
+            let xOffset = -layout.barSpan / 2 + segW / 2 + CGFloat(index) * (segW + layout.segmentGap)
+            let segBounds = CGRect(x: -segW / 2, y: -segH / 2, width: segW, height: segH)
+            let segPath   = GeometryForge.chamferedOutline(bounds: segBounds, cutDepth: 2)
+            let seg       = SKShapeNode(path: segPath)
+            seg.fillColor   = DesignToken.phosphorLime
+            seg.strokeColor = .clear
+            seg.position    = CGPoint(x: xOffset, y: layout.healthBarY)
+            parent.addChild(seg)
+            segments.append(seg)
+        }
+
+        // HP text label above the bar
+        hpLabel = TypographyScale.labelNode(
+            text: "HP  5 / 10",
+            size: 9 * layout.scale,
+            tint: DesignToken.frostSheen.withAlphaComponent(0.7),
+            weight: .body
+        )
+        hpLabel.position = CGPoint(x: 0, y: layout.healthBarY + layout.segmentHeight + 3 * layout.scale)
+        parent.addChild(hpLabel)
+    }
+
+    // Update segment colors and HP label based on current HP ratio
+    func update(current hp: Int, maximum maxHP: Int) {
+        let ratio  = CGFloat(hp) / CGFloat(max(1, maxHP))
+        let filled = max(0, min(totalSegments, Int(round(ratio * CGFloat(totalSegments)))))
+
+        // Choose fill color based on HP threshold
+        let activeFill: UIColor = {
+            if ratio > 0.5  { return DesignToken.phosphorLime }
+            if ratio > 0.25 { return DesignToken.ceruleanVolt }
+            return DesignToken.vermillionAlert
+        }()
+        let warningGlow: CGFloat = ratio <= 0.3 ? 2 : 0
+        let emptyFill = UIColor(white: 0.12, alpha: 1)
+
+        segments.enumerated().forEach { index, seg in
+            if index < filled {
+                seg.fillColor = activeFill
+                seg.glowWidth = warningGlow
+            } else {
+                seg.fillColor = emptyFill
+                seg.glowWidth = 0
+            }
+        }
+
+        hpLabel.text = "HP  \(hp) / \(maxHP)"
+    }
+}
+
+// MARK: - ResourceIndicator: icon + mutable count label composite
+private class ResourceIndicator {
+    let iconSprite: SKSpriteNode
+    let countLabel: SKLabelNode
+
+    init(assetName: String, iconSize: CGSize, labelSize: CGFloat, labelOffset: CGFloat, xPos: CGFloat, rowY: CGFloat) {
+        iconSprite          = SKSpriteNode(imageNamed: assetName)
+        iconSprite.size     = iconSize
+        iconSprite.position = CGPoint(x: xPos, y: rowY)
+
+        countLabel = TypographyScale.labelNode(
+            text: "0",
+            size: labelSize,
+            tint: DesignToken.ceruleanVolt,
+            weight: .headline
+        )
+        countLabel.position = CGPoint(x: xPos, y: rowY - labelOffset)
+    }
+
+    func attach(to parent: SKNode) {
+        parent.addChild(iconSprite)
+        parent.addChild(countLabel)
+    }
+
+    func updateCount(_ value: Int) {
+        countLabel.text = "\(value)"
+    }
+}
+
+// MARK: - TabulaVerdure: assembled HUD panel
+class TabulaVerdure: SKNode {
+
+    // MARK: Sub-components
+    private let healthRenderer  = HealthBarRenderer()
+    private var foodIndicator:   ResourceIndicator!
+    private var waterIndicator:  ResourceIndicator!
+    private var weaponIndicator: ResourceIndicator!
+    private var survivorIndicator: ResourceIndicator!
+
+    // MARK: Day / weather labels
+    private var dayLabel:     SKLabelNode!
+    private var weatherIcon:  SKSpriteNode!
     private var weatherLabel: SKLabelNode!
 
-    private var foodIcon: SKSpriteNode!
-    private var foodLabel: SKLabelNode!
-    private var waterIcon: SKSpriteNode!
-    private var waterLabel: SKLabelNode!
-    private var weaponIcon: SKSpriteNode!
-    private var weaponLabel: SKLabelNode!
-    private var survivorIcon: SKSpriteNode!
-    private var survivorLabel: SKLabelNode!
-
-    private let panelWidth: CGFloat
-    private let maxVita: Int = 10
+    // MARK: Layout
+    private let metrics: DisplayMetrics
+    private let layout:  HUDLayout
 
     init(sceneSize: CGSize) {
-        sc = sceneSize.adaptiveScale
-        panelWidth = sceneSize.width - 24 * sc
+        let dm = DisplayMetrics(screenSize: sceneSize)
+        let panelW = sceneSize.width - 24 * dm.factor
+        let panelH: CGFloat = 114 * dm.factor
+
+        self.metrics = dm
+        self.layout  = HUDLayout(
+            scale:       dm.factor,
+            totalWidth:  panelW,
+            panelHeight: panelH
+        )
+
         super.init()
-        buildPanel()
+
+        buildBackground()
+        buildStatusRow()
+        buildHealthBar()
+        buildResourceRow()
     }
 
-    required init?(coder aDecoder: NSCoder) { fatalError() }
+    required init?(coder aDecoder: NSCoder) { fatalError("init(coder:) not implemented") }
 
-    private func buildPanel() {
-        let ph: CGFloat = 110 * sc
-        let bg = PaletteForge.makeRoundedPanel(
-            size: CGSize(width: panelWidth, height: ph),
-            cornerRadius: 14 * sc,
-            fillColor: PaletteForge.panelBg,
-            strokeColor: PaletteForge.cinderGold.withAlphaComponent(0.5),
-            lineWidth: 1
+    // MARK: - Four-phase construction
+
+    private func buildBackground() {
+        let panelSize = CGSize(width: layout.totalWidth, height: layout.panelHeight)
+        let bg = GeometryForge.panelNode(
+            size: panelSize,
+            cutDepth: 10,
+            fill: DesignToken.vaultSurface,
+            stroke: DesignToken.radiantCrimson,
+            strokeWidth: 2
         )
+        bg.glowWidth = 1.5
         addChild(bg)
 
-        // Day label
-        dayLabel = PaletteForge.makeLabel(text: "Day 1", fontSize: 13 * sc, color: PaletteForge.cinderGold, bold: true)
-        dayLabel.position = CGPoint(x: -panelWidth * 0.38, y: ph * 0.35)
+        // Aqua corner brackets on the background panel
+        GeometryForge.attachCornerBrackets(
+            to: bg,
+            covering: panelSize,
+            armLength: 10,
+            tint: DesignToken.ceruleanVolt,
+            thickness: 1.5
+        )
+    }
+
+    private func buildStatusRow() {
+        let sc  = metrics.factor
+        let row1Y = layout.topRowY
+
+        // Day counter label (left side)
+        dayLabel = TypographyScale.labelNode(
+            text: "DAY 1",
+            size: 13 * sc,
+            tint: DesignToken.radiantCrimson,
+            weight: .headline
+        )
+        dayLabel.position = CGPoint(x: -layout.totalWidth * 0.34, y: row1Y)
         addChild(dayLabel)
 
-        // Weather — kept well left of the portrait that sits at the right edge
-        weatherIcon = SKSpriteNode(imageNamed: "icon_weather_sunny")
-        weatherIcon.size = CGSize(width: 22 * sc, height: 22 * sc)
-        weatherIcon.position = CGPoint(x: panelWidth * 0.18, y: ph * 0.35)
+        // Weather icon (center-left)
+        weatherIcon      = SKSpriteNode(imageNamed: "icon_weather_sunny")
+        weatherIcon.size = CGSize(width: 20 * sc, height: 20 * sc)
+        weatherIcon.position = CGPoint(x: layout.totalWidth * 0.12, y: row1Y)
         addChild(weatherIcon)
 
-        weatherLabel = PaletteForge.makeLabel(text: "Sunny", fontSize: 11 * sc, color: PaletteForge.ashWhite)
-        weatherLabel.position = CGPoint(x: panelWidth * 0.28, y: ph * 0.35)
+        // Weather text label (center-right)
+        weatherLabel = TypographyScale.labelNode(
+            text: "SUNNY",
+            size: 10 * sc,
+            tint: DesignToken.ceruleanVolt,
+            weight: .headline
+        )
+        weatherLabel.position = CGPoint(x: layout.totalWidth * 0.28, y: row1Y)
         weatherLabel.horizontalAlignmentMode = .center
         addChild(weatherLabel)
-
-        // HP bar
-        let barW = panelWidth * 0.88
-        let barH: CGFloat = 10 * sc
-        let barY = ph * 0.08
-
-        let barBg = SKShapeNode(rectOf: CGSize(width: barW, height: barH), cornerRadius: barH/2)
-        barBg.fillColor = UIColor(white: 0.2, alpha: 1)
-        barBg.strokeColor = .clear
-        barBg.position = CGPoint(x: 0, y: barY)
-        addChild(barBg)
-
-        vitaFill = SKShapeNode(rectOf: CGSize(width: barW, height: barH), cornerRadius: barH/2)
-        vitaFill.fillColor = PaletteForge.jadeTeal
-        vitaFill.strokeColor = .clear
-        vitaFill.position = CGPoint(x: 0, y: barY)
-        addChild(vitaFill)
-
-        vitaLabel = PaletteForge.makeLabel(text: "HP  5 / 10", fontSize: 10 * sc, color: PaletteForge.ashWhite)
-        vitaLabel.position = CGPoint(x: 0, y: barY + barH + 3 * sc)
-        addChild(vitaLabel)
-
-        // Resource row
-        let iconSz = CGSize(width: 20 * sc, height: 20 * sc)
-        let rowY = -(ph * 0.28)
-        let spacing = panelWidth * 0.22
-
-        foodIcon = SKSpriteNode(imageNamed: "icon_slot_food")
-        foodIcon.size = iconSz
-        foodIcon.position = CGPoint(x: -spacing * 1.5, y: rowY)
-        addChild(foodIcon)
-        foodLabel = PaletteForge.makeLabel(text: "2", fontSize: 12 * sc, color: PaletteForge.ashWhite)
-        foodLabel.position = CGPoint(x: -spacing * 1.5, y: rowY - 16 * sc)
-        addChild(foodLabel)
-
-        waterIcon = SKSpriteNode(imageNamed: "icon_slot_water")
-        waterIcon.size = iconSz
-        waterIcon.position = CGPoint(x: -spacing * 0.5, y: rowY)
-        addChild(waterIcon)
-        waterLabel = PaletteForge.makeLabel(text: "2", fontSize: 12 * sc, color: PaletteForge.ashWhite)
-        waterLabel.position = CGPoint(x: -spacing * 0.5, y: rowY - 16 * sc)
-        addChild(waterLabel)
-
-        weaponIcon = SKSpriteNode(imageNamed: "icon_slot_weapon")
-        weaponIcon.size = iconSz
-        weaponIcon.position = CGPoint(x: spacing * 0.5, y: rowY)
-        addChild(weaponIcon)
-        weaponLabel = PaletteForge.makeLabel(text: "1", fontSize: 12 * sc, color: PaletteForge.ashWhite)
-        weaponLabel.position = CGPoint(x: spacing * 0.5, y: rowY - 16 * sc)
-        addChild(weaponLabel)
-
-        survivorIcon = SKSpriteNode(imageNamed: "icon_slot_survivor")
-        survivorIcon.size = iconSz
-        survivorIcon.position = CGPoint(x: spacing * 1.5, y: rowY)
-        addChild(survivorIcon)
-        survivorLabel = PaletteForge.makeLabel(text: "0", fontSize: 12 * sc, color: PaletteForge.ashWhite)
-        survivorLabel.position = CGPoint(x: spacing * 1.5, y: rowY - 16 * sc)
-        addChild(survivorLabel)
     }
 
-    func refresh(chronicle: VigilChronicle) {
-        dayLabel.text = "Day \(chronicle.diurnalIndex)"
-        weatherIcon.texture = SKTexture(imageNamed: chronicle.aetherCondition.iconAsset)
-        weatherLabel.text = chronicle.aetherCondition.displayName
-
-        // HP bar fill
-        let ratio = CGFloat(chronicle.vitality) / CGFloat(chronicle.maxVitality)
-        let barW = panelWidth * 0.88
-        let barH: CGFloat = 10 * sc
-        let fillW = max(barH, barW * ratio)
-        let fillPath = UIBezierPath(roundedRect: CGRect(x: -barW/2, y: -barH/2, width: fillW, height: barH), cornerRadius: barH/2)
-        vitaFill.path = fillPath.cgPath
-        vitaFill.fillColor = ratio > 0.5 ? PaletteForge.jadeTeal : (ratio > 0.25 ? PaletteForge.emberOrange : PaletteForge.bloodRed)
-        vitaLabel.text = "HP  \(chronicle.vitality) / \(chronicle.maxVitality)"
-
-        foodLabel.text = "\(chronicle.provenderStock)"
-        waterLabel.text = "\(chronicle.aquiferStock)"
-        weaponLabel.text = "\(chronicle.armamentStock)"
-        survivorLabel.text = "\(chronicle.wayfarerCount)"
+    private func buildHealthBar() {
+        healthRenderer.buildSegments(into: self, layout: layout)
     }
+
+    private func buildResourceRow() {
+        let sc         = metrics.factor
+        let iconSize   = CGSize(width: 18 * sc, height: 18 * sc)
+        let labelSize  = 12 * sc
+        let labelDrop  = 15 * sc
+        let rowY       = layout.resourceRowY
+        let col        = layout.colSpacing
+
+        // Define the four resource slots: (assetName, x-column multiplier)
+        let resourceDefs: [(String, CGFloat)] = [
+            ("icon_slot_food",     -col * 1.5),
+            ("icon_slot_water",    -col * 0.5),
+            ("icon_slot_weapon",    col * 0.5),
+            ("icon_slot_survivor",  col * 1.5)
+        ]
+
+        let indicators = resourceDefs.map { assetName, xPos in
+            ResourceIndicator(
+                assetName:   assetName,
+                iconSize:    iconSize,
+                labelSize:   labelSize,
+                labelOffset: labelDrop,
+                xPos:        xPos,
+                rowY:        rowY
+            )
+        }
+        indicators.forEach { $0.attach(to: self) }
+
+        // Assign to named properties for later updates
+        foodIndicator     = indicators[0]
+        waterIndicator    = indicators[1]
+        weaponIndicator   = indicators[2]
+        survivorIndicator = indicators[3]
+    }
+
+    // MARK: - Update API
+
+    func replenish(grimoire: VespersGrimoire) {
+        // Day and weather
+        dayLabel.text            = "DAY \(grimoire.solsticeCount)"
+        weatherIcon.texture      = SKTexture(imageNamed: grimoire.etherClimate.sigillumAsset)
+        weatherLabel.text        = grimoire.etherClimate.appellative.uppercased()
+
+        // Health bar
+        healthRenderer.update(current: grimoire.ichor, maximum: grimoire.maxIchor)
+
+        // Resource counts
+        foodIndicator.updateCount(grimoire.mannaCache)
+        waterIndicator.updateCount(grimoire.brineCache)
+        weaponIndicator.updateCount(grimoire.falchionCache)
+        survivorIndicator.updateCount(grimoire.pilgrimCount)
+    }
+}
+
+// MARK: - Backward-compat alias
+typealias ProvisionsManifestNode = TabulaVerdure
+
+extension TabulaVerdure {
+    func refresh(chronicle: VespersGrimoire) { replenish(grimoire: chronicle) }
 }

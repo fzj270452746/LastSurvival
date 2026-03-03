@@ -1,261 +1,377 @@
-// EpitaphScene.swift — Game over / victory screen
+// EpitaphScene.swift — Game over / victory screen (refactored)
 
 import SpriteKit
 
+// MARK: - EpitaphTheme: visual configuration based on outcome
+private struct EpitaphTheme {
+    let resultIcon:      String
+    let headlineText:    String
+    let headlineTint:    UIColor
+    let overlayTint:     UIColor
+    let panelBorderTint: UIColor
+    let statAccentTint:  UIColor
+    let backdropAlpha:   CGFloat
+
+    static func from(victory: Bool) -> EpitaphTheme {
+        if victory {
+            return EpitaphTheme(
+                resultIcon:      "🏆",
+                headlineText:    "YOU SURVIVED",
+                headlineTint:    DesignToken.phosphorLime,
+                overlayTint:     UIColor(red: 0.06, green: 0.18, blue: 0.04, alpha: 0.50),
+                panelBorderTint: DesignToken.phosphorLime,
+                statAccentTint:  DesignToken.phosphorLime,
+                backdropAlpha:   0.18
+            )
+        } else {
+            return EpitaphTheme(
+                resultIcon:      "💀",
+                headlineText:    "YOU PERISHED",
+                headlineTint:    DesignToken.vermillionAlert,
+                overlayTint:     UIColor(red: 0.18, green: 0.02, blue: 0.06, alpha: 0.60),
+                panelBorderTint: DesignToken.vermillionAlert,
+                statAccentTint:  DesignToken.radiantCrimson,
+                backdropAlpha:   0.14
+            )
+        }
+    }
+}
+
+// MARK: - StatEntry: single stat label/value pair
+private struct StatEntry {
+    let caption: String
+    let value:   String
+}
+
+// MARK: - StatCardBuilder: 2-column statistics panel constructor
+private class StatCardBuilder {
+    private let entries:      [StatEntry]
+    private let accentTint:   UIColor
+    private let borderTint:   UIColor
+
+    init(entries: [StatEntry], accent: UIColor, border: UIColor) {
+        self.entries    = entries
+        self.accentTint = accent
+        self.borderTint = border
+    }
+
+    func buildPanel(sceneWidth: CGFloat, scale sc: CGFloat) -> SKNode {
+        let panelW: CGFloat = sceneWidth - 38 * sc
+        let panelH: CGFloat = 134 * sc
+
+        let wrapper = SKNode()
+        let surface = GeometryForge.panelNode(
+            size:        CGSize(width: panelW, height: panelH),
+            cutDepth:    10,
+            fill:        DesignToken.vaultSurface,
+            stroke:      borderTint.withAlphaComponent(0.45),
+            strokeWidth: 1.5
+        )
+        wrapper.addChild(surface)
+
+        let columnStride = panelW * 0.46
+        let rowStride    = panelH * 0.44
+
+        entries.enumerated().forEach { idx, entry in
+            let columnOffset: CGFloat = CGFloat(idx % 2) - 0.5
+            let rowOffset:    CGFloat = CGFloat(idx / 2)
+            let xPos = columnOffset * columnStride
+            let yPos = panelH * 0.22 - rowOffset * rowStride
+
+            let valueLabel = TypographyScale.labelNode(
+                text:   entry.value,
+                size:   24 * sc,
+                tint:   accentTint,
+                weight: .headline
+            )
+            valueLabel.position = CGPoint(x: xPos, y: yPos)
+            surface.addChild(valueLabel)
+
+            let captionLabel = TypographyScale.labelNode(
+                text: entry.caption,
+                size: 8 * sc,
+                tint: DesignToken.ashNebula
+            )
+            captionLabel.position = CGPoint(x: xPos, y: yPos - 19 * sc)
+            surface.addChild(captionLabel)
+        }
+        return wrapper
+    }
+}
+
+// MARK: - RunPostProcessor: saves run and evaluates achievements
+private enum RunPostProcessor {
+    static func finalize(chronicle: VigilChronicle, victory: Bool) -> [Achievement] {
+        let record = RunRecord(chronicle: chronicle, victory: victory)
+        RunArchiveStore.shared.save(record: record)
+        return AchievementRegistry.shared.evaluate(record: record)
+    }
+}
+
+// MARK: - AchievementRevealQueue: sequentially reveals achievement toasts
+private class AchievementRevealQueue {
+    private let sceneSize: CGSize
+    private let scale:     CGFloat
+    weak var scene: SKScene?
+
+    init(sceneSize: CGSize, scale: CGFloat, scene: SKScene) {
+        self.sceneSize = sceneSize
+        self.scale     = scale
+        self.scene     = scene
+    }
+
+    func present(_ achievements: [Achievement], initialDelay: TimeInterval = 1.6) {
+        var cumulativeDelay = initialDelay
+        achievements.forEach { ach in
+            showToast(for: ach, after: cumulativeDelay)
+            cumulativeDelay += 2.8
+        }
+    }
+
+    private func showToast(for ach: Achievement, after delay: TimeInterval) {
+        let sc    = scale
+        let toast = buildToast(ach: ach, sc: sc)
+        toast.position  = CGPoint(x: sceneSize.width / 2, y: sceneSize.height * 0.88)
+        toast.zPosition = 20
+        toast.alpha     = 0
+        scene?.addChild(toast)
+        toast.run(SKAction.sequence([
+            SKAction.wait(forDuration: delay),
+            SKAction.group([
+                SKAction.fadeIn(withDuration: 0.25),
+                SKAction.moveBy(x: 0, y: 6 * sc, duration: 0.25)
+            ]),
+            SKAction.wait(forDuration: 2.2),
+            SKAction.group([
+                SKAction.fadeOut(withDuration: 0.3),
+                SKAction.moveBy(x: 0, y: 8 * sc, duration: 0.3)
+            ]),
+            SKAction.removeFromParent()
+        ]))
+    }
+
+    private func buildToast(ach: Achievement, sc: CGFloat) -> SKNode {
+        let toastW = sceneSize.width * 0.78
+        let toastH = 46 * sc
+        let root   = SKNode()
+
+        let toastBg = GeometryForge.panelNode(
+            size:        CGSize(width: toastW, height: toastH),
+            cutDepth:    8,
+            fill:        UIColor(red: 0.08, green: 0.04, blue: 0.22, alpha: 0.97),
+            stroke:      DesignToken.phosphorLime,
+            strokeWidth: 1.5
+        )
+        root.addChild(toastBg)
+
+        let iconNode = TypographyScale.labelNode(text: ach.icon, size: 20 * sc)
+        iconNode.position = CGPoint(x: -toastW / 2 + 22 * sc, y: 0)
+        root.addChild(iconNode)
+
+        let titleNode = TypographyScale.labelNode(
+            text:   "ACHIEVEMENT: \(ach.title)",
+            size:   10 * sc,
+            tint:   DesignToken.phosphorLime,
+            weight: .headline
+        )
+        titleNode.position = CGPoint(x: 6 * sc, y: toastH * 0.13)
+        root.addChild(titleNode)
+
+        let descNode = TypographyScale.labelNode(
+            text: ach.description,
+            size: 9 * sc,
+            tint: DesignToken.frostSheen.withAlphaComponent(0.75)
+        )
+        descNode.position = CGPoint(x: 6 * sc, y: -toastH * 0.22)
+        root.addChild(descNode)
+
+        return root
+    }
+}
+
+// MARK: - EpitaphScene
 class EpitaphScene: SKScene {
 
     private let chronicle: VigilChronicle
-    private let victory: Bool
+    private let victory:   Bool
+    private lazy var theme = EpitaphTheme.from(victory: victory)
 
     init(size: CGSize, chronicle: VigilChronicle, victory: Bool) {
         self.chronicle = chronicle
-        self.victory = victory
+        self.victory   = victory
         super.init(size: size)
     }
 
-    required init?(coder aDecoder: NSCoder) { fatalError() }
+    required init?(coder aDecoder: NSCoder) { fatalError("init(coder:) not implemented") }
 
     override func didMove(to view: SKView) {
-        backgroundColor = PaletteForge.obsidian
-        saveRunAndUnlockAchievements()
-        buildUI()
-    }
+        backgroundColor = DesignToken.cosmicInk
 
-    private func saveRunAndUnlockAchievements() {
-        let record = RunRecord(chronicle: chronicle, victory: victory)
-        RunArchiveStore.shared.save(record: record)
-        let newAchievements = AchievementRegistry.shared.evaluate(record: record)
-        if !newAchievements.isEmpty {
-            run(SKAction.wait(forDuration: 1.6)) { [weak self] in
-                self?.showAchievementToast(newAchievements)
-            }
+        // Persist run and collect newly-unlocked achievements
+        let unlocked = RunPostProcessor.finalize(chronicle: chronicle, victory: victory)
+
+        assembleScene()
+
+        // Schedule achievement toasts if any unlocked
+        if !unlocked.isEmpty {
+            AchievementRevealQueue(sceneSize: size, scale: size.calibration, scene: self)
+                .present(unlocked, initialDelay: 1.6)
         }
     }
 
-    private func showAchievementToast(_ achievements: [Achievement]) {
-        let sc = size.adaptiveScale
-        var delay: TimeInterval = 0
-        for ach in achievements {
-            let toast = buildToast(achievement: ach, sc: sc)
-            toast.position = CGPoint(x: size.width / 2, y: size.height * 0.88)
-            toast.zPosition = 20
-            toast.alpha = 0
-            addChild(toast)
-            toast.run(SKAction.sequence([
-                SKAction.wait(forDuration: delay),
-                SKAction.group([
-                    SKAction.fadeIn(withDuration: 0.25),
-                    SKAction.moveBy(x: 0, y: 6 * sc, duration: 0.25)
-                ]),
-                SKAction.wait(forDuration: 2.2),
-                SKAction.group([
-                    SKAction.fadeOut(withDuration: 0.3),
-                    SKAction.moveBy(x: 0, y: 8 * sc, duration: 0.3)
-                ]),
-                SKAction.removeFromParent()
-            ]))
-            delay += 2.8
-        }
+    // MARK: - Scene assembly steps
+
+    private func assembleScene() {
+        let sc = size.calibration
+        mountBackground(sc: sc)
+        mountResultIcon(sc: sc)
+        mountHeadline(sc: sc)
+        mountSubtitle(sc: sc)
+        mountStatPanel(sc: sc)
+        mountButtons(sc: sc)
     }
 
-    private func buildToast(achievement: Achievement, sc: CGFloat) -> SKNode {
-        let container = SKNode()
-        let toastW = size.width * 0.76
-        let toastH = 44 * sc
-        let bg = PaletteForge.makeRoundedPanel(
-            size: CGSize(width: toastW, height: toastH),
-            cornerRadius: 10 * sc,
-            fillColor: UIColor(red: 0.15, green: 0.12, blue: 0.05, alpha: 0.96),
-            strokeColor: PaletteForge.cinderGold,
-            lineWidth: 1.5
-        )
-        container.addChild(bg)
+    private func mountBackground(sc: CGFloat) {
+        let wallpaper       = SKSpriteNode(imageNamed: "bg_main")
+        wallpaper.size      = size
+        wallpaper.position  = CGPoint(x: size.width / 2, y: size.height / 2)
+        wallpaper.alpha     = theme.backdropAlpha
+        wallpaper.zPosition = -1
+        addChild(wallpaper)
 
-        let iconLbl = PaletteForge.makeLabel(text: achievement.icon, fontSize: 20 * sc)
-        iconLbl.position = CGPoint(x: -toastW / 2 + 22 * sc, y: 0)
-        container.addChild(iconLbl)
-
-        let titleLbl = PaletteForge.makeLabel(text: "Achievement: \(achievement.title)", fontSize: 10 * sc, color: PaletteForge.cinderGold, bold: true)
-        titleLbl.position = CGPoint(x: 6 * sc, y: toastH * 0.13)
-        container.addChild(titleLbl)
-
-        let descLbl = PaletteForge.makeLabel(text: achievement.description, fontSize: 9 * sc, color: PaletteForge.ashWhite.withAlphaComponent(0.75))
-        descLbl.position = CGPoint(x: 6 * sc, y: -toastH * 0.22)
-        container.addChild(descLbl)
-
-        return container
+        let tintLayer       = SKShapeNode(rectOf: size)
+        tintLayer.position  = CGPoint(x: size.width / 2, y: size.height / 2)
+        tintLayer.fillColor = theme.overlayTint
+        tintLayer.strokeColor = .clear
+        tintLayer.zPosition = 0
+        addChild(tintLayer)
     }
 
-    private func buildUI() {
-        let sc = size.adaptiveScale
-
-        // Background
-        let bg = SKSpriteNode(imageNamed: "bg_main")
-        bg.size = size
-        bg.position = CGPoint(x: size.width/2, y: size.height/2)
-        bg.alpha = victory ? 0.30 : 0.20
-        bg.zPosition = -1
-        addChild(bg)
-
-        // Color overlay
-        let overlay = SKShapeNode(rectOf: size)
-        overlay.position = CGPoint(x: size.width/2, y: size.height/2)
-        overlay.fillColor = victory
-            ? UIColor(red: 0.05, green: 0.12, blue: 0.08, alpha: 0.6)
-            : UIColor(red: 0.12, green: 0.03, blue: 0.03, alpha: 0.7)
-        overlay.strokeColor = .clear
-        overlay.zPosition = 0
-        addChild(overlay)
-
-        // Result icon / emoji label
-        let iconLbl = PaletteForge.makeLabel(
-            text: victory ? "🏆" : "💀",
-            fontSize: 72 * sc,
-            color: .white,
-            bold: false
-        )
-        iconLbl.position = CGPoint(x: size.width/2, y: size.height * 0.72)
-        iconLbl.zPosition = 2
-        iconLbl.alpha = 0
-        iconLbl.run(SKAction.sequence([
-            SKAction.wait(forDuration: 0.3),
+    private func mountResultIcon(sc: CGFloat) {
+        let iconNode       = TypographyScale.labelNode(text: theme.resultIcon, size: 76 * sc)
+        iconNode.position  = CGPoint(x: size.width / 2, y: size.height * 0.72)
+        iconNode.zPosition = 2
+        iconNode.alpha     = 0
+        iconNode.run(SKAction.sequence([
+            SKAction.wait(forDuration: 0.28),
             SKAction.group([
-                SKAction.fadeIn(withDuration: 0.4),
+                SKAction.fadeIn(withDuration: 0.38),
                 SKAction.sequence([
-                    SKAction.scale(to: 1.3, duration: 0.2),
-                    SKAction.scale(to: 1.0, duration: 0.2)
+                    SKAction.scale(to: 1.35, duration: 0.18),
+                    SKAction.scale(to: 1.00, duration: 0.18)
                 ])
             ])
         ]))
-        addChild(iconLbl)
+        addChild(iconNode)
+    }
 
-        // Result title
-        let resultTitle = victory ? "YOU SURVIVED" : "YOU PERISHED"
-        let titleColor = victory ? PaletteForge.cinderGold : PaletteForge.bloodRed
-        let titleLbl = PaletteForge.makeLabel(text: resultTitle, fontSize: 32 * sc, color: titleColor, bold: true)
-        titleLbl.position = CGPoint(x: size.width/2, y: size.height * 0.60)
-        titleLbl.zPosition = 2
-        titleLbl.alpha = 0
-        titleLbl.run(SKAction.sequence([
-            SKAction.wait(forDuration: 0.55),
-            SKAction.fadeIn(withDuration: 0.35)
+    private func mountHeadline(sc: CGFloat) {
+        let headline       = TypographyScale.labelNode(
+            text:   theme.headlineText,
+            size:   34 * sc,
+            tint:   theme.headlineTint,
+            weight: .headline
+        )
+        headline.position  = CGPoint(x: size.width / 2, y: size.height * 0.60)
+        headline.zPosition = 2
+        headline.alpha     = 0
+        headline.run(SKAction.sequence([
+            SKAction.wait(forDuration: 0.52),
+            SKAction.fadeIn(withDuration: 0.32)
         ]))
-        addChild(titleLbl)
+        addChild(headline)
+    }
 
-        // Subtitle
-        let subtitle = victory
+    private func mountSubtitle(sc: CGFloat) {
+        let bodyText = victory
             ? "30 days in the wasteland. A legend."
             : "Day \(chronicle.diurnalIndex) — The wasteland claims another soul."
-        let subLbl = PaletteForge.makeLabel(text: subtitle, fontSize: 13 * sc, color: PaletteForge.ashWhite.withAlphaComponent(0.8))
-        subLbl.position = CGPoint(x: size.width/2, y: size.height * 0.53)
-        subLbl.zPosition = 2
-        subLbl.numberOfLines = 2
-        subLbl.preferredMaxLayoutWidth = size.width * 0.82
-        subLbl.alpha = 0
-        subLbl.run(SKAction.sequence([
-            SKAction.wait(forDuration: 0.7),
-            SKAction.fadeIn(withDuration: 0.35)
+
+        let body                = TypographyScale.labelNode(text: bodyText, size: 12 * sc, tint: DesignToken.ashNebula)
+        body.position           = CGPoint(x: size.width / 2, y: size.height * 0.53)
+        body.zPosition          = 2
+        body.numberOfLines      = 2
+        body.preferredMaxLayoutWidth = size.width * 0.84
+        body.alpha              = 0
+        body.run(SKAction.sequence([
+            SKAction.wait(forDuration: 0.68),
+            SKAction.fadeIn(withDuration: 0.32)
         ]))
-        addChild(subLbl)
-
-        // Stats panel
-        buildStatsPanel(sc: sc)
-
-        // Buttons
-        let btnW = 200 * sc
-        let btnH = 50 * sc
-
-        let retryBtn = ObsidianButtonNode(
-            size: CGSize(width: btnW, height: btnH),
-            title: "PLAY AGAIN",
-            fillColor: PaletteForge.cinderGold,
-            titleColor: PaletteForge.obsidian,
-            cornerRadius: 25 * sc
-        )
-        retryBtn.position = CGPoint(x: size.width/2, y: size.height * 0.14)
-        retryBtn.zPosition = 4
-        retryBtn.alpha = 0
-        retryBtn.onTap = { [weak self] in self?.restartGame() }
-        retryBtn.run(SKAction.sequence([
-            SKAction.wait(forDuration: 1.0),
-            SKAction.fadeIn(withDuration: 0.35)
-        ]))
-        addChild(retryBtn)
-
-        let menuBtn = ObsidianButtonNode(
-            size: CGSize(width: btnW * 0.7, height: btnH * 0.75),
-            title: "MAIN MENU",
-            fillColor: PaletteForge.slateGray,
-            titleColor: PaletteForge.ashWhite,
-            cornerRadius: 18 * sc
-        )
-        menuBtn.position = CGPoint(x: size.width/2, y: size.height * 0.07)
-        menuBtn.zPosition = 4
-        menuBtn.alpha = 0
-        menuBtn.onTap = { [weak self] in self?.goToMenu() }
-        menuBtn.run(SKAction.sequence([
-            SKAction.wait(forDuration: 1.1),
-            SKAction.fadeIn(withDuration: 0.35)
-        ]))
-        addChild(menuBtn)
+        addChild(body)
     }
 
-    private func buildStatsPanel(sc: CGFloat) {
-        let panelW = size.width - 40 * sc
-        let panelH: CGFloat = 130 * sc
-        let panel = PaletteForge.makeRoundedPanel(
-            size: CGSize(width: panelW, height: panelH),
-            cornerRadius: 16 * sc,
-            fillColor: PaletteForge.panelBg,
-            strokeColor: PaletteForge.cinderGold.withAlphaComponent(0.35),
-            lineWidth: 1
-        )
-        panel.position = CGPoint(x: size.width/2, y: size.height * 0.36)
+    private func mountStatPanel(sc: CGFloat) {
+        let entries = [
+            StatEntry(caption: "DAYS SURVIVED",  value: "\(chronicle.diurnalIndex)"),
+            StatEntry(caption: "ZOMBIES SLAIN",  value: "\(chronicle.revenantTally)"),
+            StatEntry(caption: "SURVIVORS MET",  value: "\(chronicle.wayfarerTally)"),
+            StatEntry(caption: "HP REMAINING",   value: "\(max(0, chronicle.vitality))")
+        ]
+        let panel = StatCardBuilder(
+            entries: entries,
+            accent:  theme.statAccentTint,
+            border:  theme.panelBorderTint
+        ).buildPanel(sceneWidth: size.width, scale: sc)
+
+        panel.position  = CGPoint(x: size.width / 2, y: size.height * 0.36)
         panel.zPosition = 3
-        panel.alpha = 0
+        panel.alpha     = 0
         panel.run(SKAction.sequence([
-            SKAction.wait(forDuration: 0.85),
-            SKAction.fadeIn(withDuration: 0.35)
+            SKAction.wait(forDuration: 0.82),
+            SKAction.fadeIn(withDuration: 0.32)
         ]))
         addChild(panel)
-
-        let stats: [(String, String)] = [
-            ("Days Survived", "\(chronicle.diurnalIndex)"),
-            ("Zombies Slain", "\(chronicle.revenantTally)"),
-            ("Survivors Met", "\(chronicle.wayfarerTally)"),
-            ("HP Remaining", "\(max(0, chronicle.vitality))")
-        ]
-
-        let colSpacing = panelW * 0.46
-        let rowSpacing = panelH * 0.42
-
-        for (i, (label, value)) in stats.enumerated() {
-            let col = CGFloat(i % 2) - 0.5
-            let row = CGFloat(i / 2)
-            let x = col * colSpacing
-            let y = panelH * 0.22 - row * rowSpacing
-
-            let valLbl = PaletteForge.makeLabel(text: value, fontSize: 22 * sc, color: PaletteForge.cinderGold, bold: true)
-            valLbl.position = CGPoint(x: x, y: y)
-            panel.addChild(valLbl)
-
-            let nameLbl = PaletteForge.makeLabel(text: label, fontSize: 9 * sc, color: PaletteForge.ashWhite.withAlphaComponent(0.65))
-            nameLbl.position = CGPoint(x: x, y: y - 18 * sc)
-            panel.addChild(nameLbl)
-        }
     }
 
-    private func restartGame() {
-        let scene = ArchetypeVaultScene(size: size)
-        scene.scaleMode = scaleMode
-        let trans = SKTransition.fade(withDuration: 0.5)
-        view?.presentScene(scene, transition: trans)
+    private func mountButtons(sc: CGFloat) {
+        let btnW = 210 * sc
+        let btnH = 52 * sc
+
+        let replayBtn = ObsidianButtonNode(
+            size:        CGSize(width: btnW, height: btnH),
+            title:       "PLAY AGAIN",
+            fillColor:   DesignToken.radiantCrimson,
+            titleColor:  DesignToken.frostSheen,
+            cornerRadius: 26 * sc
+        )
+        replayBtn.position  = CGPoint(x: size.width / 2, y: size.height * 0.14)
+        replayBtn.zPosition = 4
+        replayBtn.alpha     = 0
+        replayBtn.onTap     = { [weak self] in self?.navigateToCharacterSelect() }
+        replayBtn.run(SKAction.sequence([
+            SKAction.wait(forDuration: 1.0),
+            SKAction.fadeIn(withDuration: 0.32)
+        ]))
+        addChild(replayBtn)
+
+        let homeBtn = ObsidianButtonNode(
+            size:        CGSize(width: btnW * 0.68, height: btnH * 0.72),
+            title:       "MAIN MENU",
+            fillColor:   DesignToken.violetShadow,
+            titleColor:  DesignToken.frostSheen,
+            cornerRadius: 16 * sc
+        )
+        homeBtn.position  = CGPoint(x: size.width / 2, y: size.height * 0.07)
+        homeBtn.zPosition = 4
+        homeBtn.alpha     = 0
+        homeBtn.onTap     = { [weak self] in self?.navigateToMainMenu() }
+        homeBtn.run(SKAction.sequence([
+            SKAction.wait(forDuration: 1.1),
+            SKAction.fadeIn(withDuration: 0.32)
+        ]))
+        addChild(homeBtn)
     }
 
-    private func goToMenu() {
-        let scene = TitleVaultScene(size: size)
-        scene.scaleMode = scaleMode
-        let trans = SKTransition.fade(withDuration: 0.5)
-        view?.presentScene(scene, transition: trans)
+    // MARK: - Navigation
+    private func navigateToCharacterSelect() {
+        let dest = ArchetypeVaultScene(size: size)
+        dest.scaleMode = scaleMode
+        view?.presentScene(dest, transition: SKTransition.fade(withDuration: 0.5))
+    }
+
+    private func navigateToMainMenu() {
+        let dest = TitleVaultScene(size: size)
+        dest.scaleMode = scaleMode
+        view?.presentScene(dest, transition: SKTransition.fade(withDuration: 0.5))
     }
 }

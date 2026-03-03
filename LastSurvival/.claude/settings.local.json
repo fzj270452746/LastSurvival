@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xcodebuild -workspace LastSurvival.xcworkspace -scheme LastSurvival -destination 'generic/platform=iOS Simulator' build)",
+      "Read(//Users/hades/Desktop/**)"
+    ],
+    "additionalDirectories": [
+      "/Users/hades/.claude/projects/-Users-hades-Desktop-Code-26-02-0228-git-sdk-LastSurvival"
+    ]
+  }
+}
